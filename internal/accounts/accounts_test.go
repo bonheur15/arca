@@ -6,6 +6,7 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"arca/internal/audit"
 	"arca/internal/database"
@@ -141,6 +142,48 @@ func TestQuotaUpdateSetsAndClearsOverQuota(t *testing.T) {
 	user, err = repository.UpdatePolicyAndQuota(ctx, user.ID, 1_000, false, DefaultPolicy())
 	if err != nil || user.State != StateActive {
 		t.Fatalf("restored quota user = %#v, err = %v", user, err)
+	}
+}
+
+func TestSupportAccessIsShortLivedAndAuditable(t *testing.T) {
+	db := openTestDB(t)
+	repository := NewRepository(db.Writer())
+	ctx := context.Background()
+	admin, err := repository.CreateUser(ctx, CreateUserParams{
+		Username: "admin", Email: "admin@example.com", Role: RoleSuperadmin,
+		State: StateActive, QuotaBytes: 1, Policy: DefaultPolicy(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	member, err := repository.CreateUser(ctx, CreateUserParams{
+		Username: "member", Email: "member@example.com", Role: RoleMember,
+		State: StateActive, QuotaBytes: 1, Policy: DefaultPolicy(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(repository, &fakeIdentityProvider{}, nil, audit.NewSQLRecorder(db.Writer()))
+	access, err := service.GrantSupportAccess(ctx, member.ID, "Investigating preview failure", MutationContext{ActorID: admin.ID, RequestID: "request_1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if access.ExpiresAt.Sub(access.CreatedAt) != 15*time.Minute {
+		t.Fatalf("support lifetime = %s", access.ExpiresAt.Sub(access.CreatedAt))
+	}
+	active, err := repository.GetActiveSupportAccess(ctx, admin.ID)
+	if err != nil || active.ID != access.ID {
+		t.Fatalf("active support = %#v, err = %v", active, err)
+	}
+	if _, err := service.RevokeSupportAccess(ctx, access.ID, MutationContext{ActorID: admin.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.GetActiveSupportAccess(ctx, admin.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("revoked support lookup error = %v", err)
+	}
+	var count int
+	if err := db.Reader().QueryRow(`SELECT COUNT(*) FROM audit_events WHERE target_id = ?`, access.ID).Scan(&count); err != nil || count != 2 {
+		t.Fatalf("audit count = %d, err = %v", count, err)
 	}
 }
 
