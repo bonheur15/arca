@@ -46,6 +46,9 @@ type Runtime struct {
 	Secrets  Secrets
 	Layout   Layout
 	FromDisk bool
+	// secretEnv records secrets injected by the operator so Save never copies
+	// them into secrets.json. Existing persisted values are preserved instead.
+	secretEnv map[string]bool
 }
 
 type Overrides struct {
@@ -107,6 +110,7 @@ func Load(overrides Overrides) (Runtime, error) {
 			InstanceName:           "Arca",
 			FilesystemReserveBytes: 1 << 30,
 		},
+		secretEnv: make(map[string]bool),
 	}
 	if err := readJSON(layout.ConfigFile, &runtime.File); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return Runtime{}, fmt.Errorf("read config: %w", err)
@@ -119,10 +123,20 @@ func Load(overrides Overrides) (Runtime, error) {
 
 	runtime.File.PublicURL = firstNonEmpty(os.Getenv("ARCA_PUBLIC_URL"), runtime.File.PublicURL)
 	runtime.File.WorkOSClientID = firstNonEmpty(os.Getenv("ARCA_WORKOS_CLIENT_ID"), runtime.File.WorkOSClientID)
-	runtime.Secrets.WorkOSAPIKey = firstNonEmpty(os.Getenv("ARCA_WORKOS_API_KEY"), runtime.Secrets.WorkOSAPIKey)
-	runtime.Secrets.CookieKey = firstNonEmpty(os.Getenv("ARCA_COOKIE_KEY"), runtime.Secrets.CookieKey)
-	runtime.Secrets.CodeHMACKey = firstNonEmpty(os.Getenv("ARCA_CODE_HMAC_KEY"), runtime.Secrets.CodeHMACKey)
-	runtime.Secrets.StatusHMACKey = firstNonEmpty(os.Getenv("ARCA_STATUS_HMAC_KEY"), runtime.Secrets.StatusHMACKey)
+	for _, item := range []struct {
+		name   string
+		target *string
+	}{
+		{"ARCA_WORKOS_API_KEY", &runtime.Secrets.WorkOSAPIKey},
+		{"ARCA_COOKIE_KEY", &runtime.Secrets.CookieKey},
+		{"ARCA_CODE_HMAC_KEY", &runtime.Secrets.CodeHMACKey},
+		{"ARCA_STATUS_HMAC_KEY", &runtime.Secrets.StatusHMACKey},
+	} {
+		if value := os.Getenv(item.name); value != "" {
+			*item.target = value
+			runtime.secretEnv[item.name] = true
+		}
+	}
 	if value := os.Getenv("ARCA_FILESYSTEM_RESERVE_BYTES"); value != "" {
 		var parsed int64
 		if _, err := fmt.Sscan(value, &parsed); err != nil || parsed < 0 {
@@ -180,7 +194,24 @@ func (r Runtime) Save() error {
 	if err := writeJSONAtomic(r.Layout.ConfigFile, r.File, 0o600); err != nil {
 		return fmt.Errorf("write config: %w", err)
 	}
-	if err := writeJSONAtomic(r.Layout.SecretsFile, r.Secrets, 0o600); err != nil {
+	persisted := r.Secrets
+	if len(r.secretEnv) != 0 {
+		var previous Secrets
+		_ = readJSON(r.Layout.SecretsFile, &previous)
+		if r.secretEnv["ARCA_WORKOS_API_KEY"] {
+			persisted.WorkOSAPIKey = previous.WorkOSAPIKey
+		}
+		if r.secretEnv["ARCA_COOKIE_KEY"] {
+			persisted.CookieKey = previous.CookieKey
+		}
+		if r.secretEnv["ARCA_CODE_HMAC_KEY"] {
+			persisted.CodeHMACKey = previous.CodeHMACKey
+		}
+		if r.secretEnv["ARCA_STATUS_HMAC_KEY"] {
+			persisted.StatusHMACKey = previous.StatusHMACKey
+		}
+	}
+	if err := writeJSONAtomic(r.Layout.SecretsFile, persisted, 0o600); err != nil {
 		return fmt.Errorf("write secrets: %w", err)
 	}
 	return nil
