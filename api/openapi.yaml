@@ -1,0 +1,447 @@
+openapi: 3.0.3
+info:
+  title: Arca API
+  version: 1.0.0
+  description: Versioned API for a single-node Arca file-storage instance.
+servers:
+  - url: /api/v1
+security:
+  - bearerAuth: []
+  - cookieAuth: []
+tags:
+  - {name: Bootstrap}
+  - {name: Authentication}
+  - {name: Accounts}
+  - {name: Files}
+  - {name: Uploads}
+  - {name: Sharing}
+  - {name: Developer}
+  - {name: Administration}
+paths:
+  /bootstrap/status:
+    get:
+      tags: [Bootstrap]
+      security: []
+      operationId: getBootstrapStatus
+      responses:
+        '200': {$ref: '#/components/responses/BootstrapStatus'}
+  /bootstrap/configure:
+    post:
+      tags: [Bootstrap]
+      security: []
+      operationId: configureBootstrap
+      requestBody: {$ref: '#/components/requestBodies/JSON'}
+      responses:
+        '200': {$ref: '#/components/responses/JSON'}
+        default: {$ref: '#/components/responses/Problem'}
+  /bootstrap/verify:
+    post:
+      tags: [Bootstrap]
+      security: []
+      operationId: verifyBootstrap
+      requestBody: {$ref: '#/components/requestBodies/JSON'}
+      responses:
+        '200': {$ref: '#/components/responses/JSON'}
+        default: {$ref: '#/components/responses/Problem'}
+  /auth/magic/start:
+    post:
+      tags: [Authentication]
+      security: []
+      operationId: startMagicAuth
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, required: [email], properties: {email: {type: string, format: email}}}
+      responses:
+        '202': {$ref: '#/components/responses/JSON'}
+        default: {$ref: '#/components/responses/Problem'}
+  /auth/magic/verify:
+    post:
+      tags: [Authentication]
+      security: []
+      operationId: verifyMagicAuth
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, required: [code], properties: {code: {type: string, pattern: '^[0-9]{6}$'}}}
+      responses:
+        '200': {$ref: '#/components/responses/Session'}
+        default: {$ref: '#/components/responses/Problem'}
+  /auth/logout:
+    post:
+      tags: [Authentication]
+      operationId: logout
+      responses:
+        '204': {description: Signed out}
+        default: {$ref: '#/components/responses/Problem'}
+  /session:
+    get:
+      tags: [Authentication]
+      operationId: getSession
+      responses:
+        '200': {$ref: '#/components/responses/Session'}
+        default: {$ref: '#/components/responses/Problem'}
+  /access-requests:
+    post:
+      tags: [Accounts]
+      security: []
+      operationId: requestAccess
+      requestBody: {$ref: '#/components/requestBodies/JSON'}
+      responses:
+        '202': {$ref: '#/components/responses/JSON'}
+        default: {$ref: '#/components/responses/Problem'}
+  /access-requests/status:
+    post:
+      tags: [Accounts]
+      security: []
+      operationId: getAccessRequestStatus
+      requestBody: {$ref: '#/components/requestBodies/JSON'}
+      responses:
+        '200': {$ref: '#/components/responses/JSON'}
+        default: {$ref: '#/components/responses/Problem'}
+  /me:
+    get:
+      tags: [Accounts]
+      operationId: getMe
+      responses:
+        '200': {$ref: '#/components/responses/User'}
+        default: {$ref: '#/components/responses/Problem'}
+  /me/preferences:
+    put:
+      tags: [Accounts]
+      operationId: updatePreferences
+      requestBody: {$ref: '#/components/requestBodies/JSON'}
+      responses:
+        '200': {$ref: '#/components/responses/User'}
+        default: {$ref: '#/components/responses/Problem'}
+  /users/lookup:
+    get:
+      tags: [Accounts]
+      operationId: lookupUsers
+      parameters: [{$ref: '#/components/parameters/Query'}]
+      responses:
+        '200': {$ref: '#/components/responses/List'}
+        default: {$ref: '#/components/responses/Problem'}
+  /nodes:
+    get:
+      tags: [Files]
+      operationId: listNodes
+      parameters:
+        - {name: parent_id, in: query, schema: {type: string, format: uuid}}
+        - {$ref: '#/components/parameters/Cursor'}
+        - {$ref: '#/components/parameters/Limit'}
+      responses:
+        '200': {$ref: '#/components/responses/List'}
+        default: {$ref: '#/components/responses/Problem'}
+  /folders:
+    post:
+      tags: [Files]
+      operationId: createFolder
+      requestBody: {$ref: '#/components/requestBodies/JSON'}
+      responses:
+        '201': {$ref: '#/components/responses/Node'}
+        default: {$ref: '#/components/responses/Problem'}
+  /nodes/{nodeId}:
+    parameters: [{$ref: '#/components/parameters/NodeID'}]
+    get:
+      tags: [Files]
+      operationId: getNode
+      responses:
+        '200': {$ref: '#/components/responses/Node'}
+        default: {$ref: '#/components/responses/Problem'}
+    patch:
+      tags: [Files]
+      operationId: updateNode
+      parameters: [{$ref: '#/components/parameters/IfMatch'}]
+      requestBody: {$ref: '#/components/requestBodies/JSON'}
+      responses:
+        '200': {$ref: '#/components/responses/Node'}
+        default: {$ref: '#/components/responses/Problem'}
+  /nodes/{nodeId}/{action}:
+    parameters:
+      - {$ref: '#/components/parameters/NodeID'}
+      - {name: action, in: path, required: true, schema: {type: string, enum: [move, copy, trash, restore, purge]}}
+    post:
+      tags: [Files]
+      operationId: mutateNode
+      parameters: [{$ref: '#/components/parameters/IfMatch'}]
+      requestBody: {$ref: '#/components/requestBodies/JSON'}
+      responses:
+        '200': {$ref: '#/components/responses/JSON'}
+        '204': {description: Completed without a representation}
+        default: {$ref: '#/components/responses/Problem'}
+  /nodes/bulk:
+    post:
+      tags: [Files]
+      operationId: bulkMutateNodes
+      requestBody: {$ref: '#/components/requestBodies/JSON'}
+      responses:
+        '200': {$ref: '#/components/responses/JSON'}
+        default: {$ref: '#/components/responses/Problem'}
+  /files/{nodeId}/content:
+    get:
+      tags: [Files]
+      operationId: downloadFile
+      parameters: [{$ref: '#/components/parameters/NodeID'}]
+      responses:
+        '200': {description: File stream, content: {application/octet-stream: {schema: {type: string, format: binary}}}}
+        '206': {description: Partial file stream}
+        default: {$ref: '#/components/responses/Problem'}
+  /files/{nodeId}/versions:
+    get:
+      tags: [Files]
+      operationId: listFileVersions
+      parameters: [{$ref: '#/components/parameters/NodeID'}]
+      responses:
+        '200': {$ref: '#/components/responses/List'}
+        default: {$ref: '#/components/responses/Problem'}
+  /search:
+    get:
+      tags: [Files]
+      operationId: searchNodes
+      parameters: [{$ref: '#/components/parameters/Query'}, {$ref: '#/components/parameters/Limit'}]
+      responses:
+        '200': {$ref: '#/components/responses/List'}
+        default: {$ref: '#/components/responses/Problem'}
+  /recent:
+    get:
+      tags: [Files]
+      operationId: listRecentNodes
+      responses: {'200': {$ref: '#/components/responses/List'}, default: {$ref: '#/components/responses/Problem'}}
+  /favorites:
+    get:
+      tags: [Files]
+      operationId: listFavorites
+      responses: {'200': {$ref: '#/components/responses/List'}, default: {$ref: '#/components/responses/Problem'}}
+    post:
+      tags: [Files]
+      operationId: addFavorite
+      requestBody: {$ref: '#/components/requestBodies/JSON'}
+      responses: {'204': {description: Favorite added}, default: {$ref: '#/components/responses/Problem'}}
+  /uploads:
+    post:
+      tags: [Uploads]
+      operationId: createUpload
+      parameters:
+        - {name: Upload-Length, in: header, required: true, schema: {type: integer, format: int64}}
+        - {name: Upload-Metadata, in: header, required: true, schema: {type: string}}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      responses:
+        '201': {description: Upload created, headers: {Location: {schema: {type: string}}, Tus-Resumable: {schema: {type: string}}}}
+        default: {$ref: '#/components/responses/Problem'}
+  /uploads/{uploadId}:
+    parameters: [{$ref: '#/components/parameters/UploadID'}]
+    head:
+      tags: [Uploads]
+      operationId: inspectUpload
+      responses: {'200': {description: Current upload offset}, default: {$ref: '#/components/responses/Problem'}}
+    patch:
+      tags: [Uploads]
+      operationId: appendUpload
+      requestBody:
+        required: true
+        content: {application/offset+octet-stream: {schema: {type: string, format: binary}}}
+      responses: {'204': {description: Chunk committed}, default: {$ref: '#/components/responses/Problem'}}
+    delete:
+      tags: [Uploads]
+      operationId: cancelUpload
+      responses: {'204': {description: Upload cancelled}, default: {$ref: '#/components/responses/Problem'}}
+  /shares:
+    get:
+      tags: [Sharing]
+      operationId: listInternalShares
+      responses: {'200': {$ref: '#/components/responses/List'}, default: {$ref: '#/components/responses/Problem'}}
+    post:
+      tags: [Sharing]
+      operationId: createInternalShare
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {$ref: '#/components/requestBodies/JSON'}
+      responses: {'201': {$ref: '#/components/responses/JSON'}, default: {$ref: '#/components/responses/Problem'}}
+  /shares/{shareId}:
+    delete:
+      tags: [Sharing]
+      operationId: revokeInternalShare
+      parameters: [{$ref: '#/components/parameters/ShareID'}]
+      responses: {'204': {description: Share revoked}, default: {$ref: '#/components/responses/Problem'}}
+  /public-shares:
+    post:
+      tags: [Sharing]
+      operationId: createPublicShare
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {$ref: '#/components/requestBodies/JSON'}
+      responses: {'201': {$ref: '#/components/responses/JSON'}, default: {$ref: '#/components/responses/Problem'}}
+  /public-shares/{shareId}:
+    delete:
+      tags: [Sharing]
+      operationId: revokePublicShare
+      parameters: [{$ref: '#/components/parameters/ShareID'}]
+      responses: {'204': {description: Share revoked}, default: {$ref: '#/components/responses/Problem'}}
+  /public/exchange:
+    post:
+      tags: [Sharing]
+      security: []
+      operationId: exchangePublicCode
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, required: [code], properties: {code: {type: string, pattern: '^[0-9]{5}$'}}}
+      responses: {'200': {$ref: '#/components/responses/JSON'}, default: {$ref: '#/components/responses/Problem'}}
+  /public/bundle:
+    get:
+      tags: [Sharing]
+      security: []
+      operationId: getPublicBundle
+      responses: {'200': {$ref: '#/components/responses/List'}, default: {$ref: '#/components/responses/Problem'}}
+  /tokens:
+    get:
+      tags: [Developer]
+      operationId: listTokens
+      responses: {'200': {$ref: '#/components/responses/List'}, default: {$ref: '#/components/responses/Problem'}}
+    post:
+      tags: [Developer]
+      operationId: createToken
+      requestBody: {$ref: '#/components/requestBodies/JSON'}
+      responses: {'201': {$ref: '#/components/responses/JSON'}, default: {$ref: '#/components/responses/Problem'}}
+  /tokens/{tokenId}:
+    delete:
+      tags: [Developer]
+      operationId: revokeToken
+      parameters: [{name: tokenId, in: path, required: true, schema: {type: string, format: uuid}}]
+      responses: {'204': {description: Token revoked}, default: {$ref: '#/components/responses/Problem'}}
+  /notifications:
+    get:
+      operationId: listNotifications
+      responses: {'200': {$ref: '#/components/responses/List'}, default: {$ref: '#/components/responses/Problem'}}
+  /events:
+    get:
+      operationId: streamEvents
+      responses: {'200': {description: Server-sent event stream, content: {text/event-stream: {schema: {type: string}}}}}
+  /admin/users:
+    get:
+      tags: [Administration]
+      operationId: adminListUsers
+      responses: {'200': {$ref: '#/components/responses/List'}, default: {$ref: '#/components/responses/Problem'}}
+    post:
+      tags: [Administration]
+      operationId: adminCreateUser
+      requestBody: {$ref: '#/components/requestBodies/JSON'}
+      responses: {'201': {$ref: '#/components/responses/User'}, default: {$ref: '#/components/responses/Problem'}}
+  /admin/users/{userId}:
+    patch:
+      tags: [Administration]
+      operationId: adminUpdateUser
+      parameters: [{name: userId, in: path, required: true, schema: {type: string, format: uuid}}, {$ref: '#/components/parameters/IfMatch'}]
+      requestBody: {$ref: '#/components/requestBodies/JSON'}
+      responses: {'200': {$ref: '#/components/responses/User'}, default: {$ref: '#/components/responses/Problem'}}
+  /admin/requests:
+    get:
+      tags: [Administration]
+      operationId: adminListRequests
+      responses: {'200': {$ref: '#/components/responses/List'}, default: {$ref: '#/components/responses/Problem'}}
+  /admin/requests/{requestId}/{decision}:
+    post:
+      tags: [Administration]
+      operationId: adminDecideRequest
+      parameters:
+        - {name: requestId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: decision, in: path, required: true, schema: {type: string, enum: [approve, reject]}}
+      requestBody: {$ref: '#/components/requestBodies/JSON'}
+      responses: {'200': {$ref: '#/components/responses/JSON'}, default: {$ref: '#/components/responses/Problem'}}
+  /admin/{resource}:
+    get:
+      tags: [Administration]
+      operationId: adminGetResource
+      parameters: [{name: resource, in: path, required: true, schema: {type: string, enum: [storage, policies, jobs, audit, settings]}}]
+      responses: {'200': {$ref: '#/components/responses/JSON'}, default: {$ref: '#/components/responses/Problem'}}
+components:
+  securitySchemes:
+    bearerAuth: {type: http, scheme: bearer, bearerFormat: ArcaPAT}
+    cookieAuth: {type: apiKey, in: cookie, name: __Host-arca_session}
+  parameters:
+    NodeID: {name: nodeId, in: path, required: true, schema: {type: string, format: uuid}}
+    UploadID: {name: uploadId, in: path, required: true, schema: {type: string, format: uuid}}
+    ShareID: {name: shareId, in: path, required: true, schema: {type: string, format: uuid}}
+    Cursor: {name: cursor, in: query, schema: {type: string}}
+    Limit: {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
+    Query: {name: q, in: query, required: true, schema: {type: string, minLength: 1}}
+    IfMatch: {name: If-Match, in: header, required: true, schema: {type: string}}
+    IdempotencyKey: {name: Idempotency-Key, in: header, required: true, schema: {type: string, minLength: 8, maxLength: 200}}
+  requestBodies:
+    JSON:
+      required: true
+      content: {application/json: {schema: {type: object, additionalProperties: true}}}
+  responses:
+    JSON: {description: Successful JSON response, content: {application/json: {schema: {type: object, additionalProperties: true}}}}
+    List: {description: Paginated list, content: {application/json: {schema: {$ref: '#/components/schemas/List'}}}}
+    Node: {description: Node, content: {application/json: {schema: {$ref: '#/components/schemas/Node'}}}}
+    User: {description: User, content: {application/json: {schema: {$ref: '#/components/schemas/User'}}}}
+    Session: {description: Session, content: {application/json: {schema: {$ref: '#/components/schemas/Session'}}}}
+    BootstrapStatus: {description: Bootstrap state, content: {application/json: {schema: {type: object, required: [initialized], properties: {initialized: {type: boolean}, setup_required: {type: boolean}, expires_at: {type: string, format: date-time}}}}}}
+    Problem: {description: Problem detail, content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}}
+  schemas:
+    User:
+      type: object
+      required: [id, username, email, role, state, quota_bytes, used_bytes, reserved_bytes]
+      properties:
+        id: {type: string, format: uuid}
+        username: {type: string}
+        email: {type: string, format: email}
+        display_name: {type: string}
+        role: {type: string, enum: [superadmin, member]}
+        state: {type: string, enum: [provisioning, active, suspended, over_quota, deletion_pending, deleted]}
+        quota_bytes: {type: integer, format: int64}
+        quota_unlimited: {type: boolean}
+        used_bytes: {type: integer, format: int64}
+        reserved_bytes: {type: integer, format: int64}
+        preferences: {$ref: '#/components/schemas/Preferences'}
+    Preferences:
+      type: object
+      properties:
+        theme_mode: {type: string, enum: [system, light, dark]}
+        accent: {type: string}
+        density: {type: string, enum: [compact, comfortable]}
+        reduced_motion: {type: boolean}
+    Node:
+      type: object
+      required: [id, owner_id, kind, name, size_bytes, revision, created_at, updated_at]
+      properties:
+        id: {type: string, format: uuid}
+        parent_id: {type: string, format: uuid, nullable: true}
+        owner_id: {type: string, format: uuid}
+        kind: {type: string, enum: [file, folder]}
+        name: {type: string}
+        mime_type: {type: string}
+        size_bytes: {type: integer, format: int64}
+        revision: {type: integer, format: int64}
+        current_version_id: {type: string, format: uuid}
+        capabilities: {type: array, items: {type: string}}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    Session:
+      type: object
+      required: [authenticated]
+      properties:
+        authenticated: {type: boolean}
+        user: {$ref: '#/components/schemas/User'}
+        csrf_token: {type: string}
+    List:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {type: object, additionalProperties: true}}
+        next_cursor: {type: string, nullable: true}
+    Problem:
+      type: object
+      required: [type, title, status, code, request_id]
+      properties:
+        type: {type: string, format: uri-reference}
+        title: {type: string}
+        status: {type: integer}
+        detail: {type: string}
+        code: {type: string}
+        request_id: {type: string}
+        retry_after: {type: integer}
+        field_errors: {type: object, additionalProperties: {type: string}}
