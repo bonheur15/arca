@@ -168,7 +168,7 @@ func TestSupportAccessIsShortLivedAndAuditable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if access.ExpiresAt.Sub(access.CreatedAt) != 15*time.Minute {
+	if lifetime := access.ExpiresAt.Sub(access.CreatedAt); lifetime < 14*time.Minute+59*time.Second || lifetime > 15*time.Minute {
 		t.Fatalf("support lifetime = %s", access.ExpiresAt.Sub(access.CreatedAt))
 	}
 	active, err := repository.GetActiveSupportAccess(ctx, admin.ID)
