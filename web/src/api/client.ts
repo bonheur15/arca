@@ -13,6 +13,7 @@ import type {
   PublicBundle,
   PublicShare,
   Session,
+  SessionRecord,
   Share,
   StorageOverview,
   User,
@@ -335,6 +336,21 @@ export const api = {
   startMagicAuth: (email: string) => apiRequest("/auth/magic/start", { method: "POST", body: { email } }),
   verifyMagicAuth: async (code: string) => parseSession(await apiRequest("/auth/magic/verify", { method: "POST", body: { code } })),
   logout: () => apiRequest("/auth/logout", { method: "POST" }),
+  async sessions(): Promise<SessionRecord[]> {
+    return parseList(await apiRequest("/sessions"), (entry) => {
+      const record = object(entry);
+      return {
+        id: stringAt(record, "", "id"),
+        userAgent: stringAt(record, "Unknown device", "userAgent", "user_agent"),
+        ipAddress: nullableStringAt(record, "ipAddress", "ip_address"),
+        current: booleanAt(record, false, "current", "is_current"),
+        createdAt: stringAt(record, "", "createdAt", "created_at"),
+        lastActiveAt: stringAt(record, "", "lastActiveAt", "last_active_at"),
+        expiresAt: nullableStringAt(record, "expiresAt", "expires_at"),
+      };
+    });
+  },
+  revokeSession: (id: string) => apiRequest(`/sessions/${id}`, { method: "DELETE" }),
 
   async requestAccess(input: { username: string; email: string; displayName?: string; reason?: string; website?: string; startedAt: number }): Promise<AccessRequestReceipt> {
     const record = object(unwrap(await apiRequest("/access-requests", { method: "POST", body: input })));
@@ -461,6 +477,7 @@ export const api = {
   revokeToken: (id: string) => apiRequest(`/tokens/${id}`, { method: "DELETE" }),
 
   async adminUsers(): Promise<User[]> { return parseList(await apiRequest("/admin/users"), parseUser); },
+  createUser: async (input: JsonRecord) => parseUser(unwrap(await apiRequest("/admin/users", { method: "POST", body: input }))),
   async adminRequests(): Promise<AccessRequest[]> {
     return parseList(await apiRequest("/admin/requests"), (entry) => {
       const record = object(entry);
