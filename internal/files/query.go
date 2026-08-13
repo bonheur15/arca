@@ -350,8 +350,19 @@ func (s *Service) Purge(ctx context.Context, actorID, nodeID string, expectedRev
 	}
 	result := PurgeResult{NodesDeleted: int64(len(tree))}
 	deleteAfter := timeText(s.now().Add(24 * time.Hour))
+	var releasedBytes int64
 	for blobID, count := range counts {
 		result.VersionsDeleted += count
+		var refCount, blobSize int64
+		if err := tx.QueryRowContext(ctx, "SELECT ref_count, size_bytes FROM blobs WHERE id = ?", blobID).Scan(&refCount, &blobSize); err != nil {
+			return PurgeResult{}, err
+		}
+		if refCount < count {
+			return PurgeResult{}, NewError(CodeInvalidState, op, blobID, "blob reference count is inconsistent")
+		}
+		if refCount == count {
+			releasedBytes += blobSize
+		}
 		res, err := tx.ExecContext(ctx, `UPDATE blobs SET ref_count = ref_count - ?,
             state = CASE WHEN ref_count <= ? THEN 'deleting' ELSE state END,
             delete_after = CASE WHEN ref_count <= ? THEN ? ELSE delete_after END
@@ -368,6 +379,16 @@ func (s *Service) Purge(ctx context.Context, actorID, nodeID string, expectedRev
 		}
 		if state == "deleting" {
 			result.BlobsQueued++
+		}
+	}
+	if releasedBytes > 0 {
+		quotaResult, err := tx.ExecContext(ctx, `UPDATE users SET used_bytes = used_bytes - ?, updated_at = ?
+			WHERE id = ? AND used_bytes >= ?`, releasedBytes, timeText(s.now()), actorID, releasedBytes)
+		if err != nil {
+			return PurgeResult{}, err
+		}
+		if affected, _ := quotaResult.RowsAffected(); affected != 1 {
+			return PurgeResult{}, NewError(CodeInvalidState, op, actorID, "used-byte accounting is inconsistent")
 		}
 	}
 	for _, item := range tree {
