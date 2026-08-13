@@ -166,6 +166,13 @@ func (s *Service) CreateFolder(ctx context.Context, actorID, parentID, name stri
 	if parent.Kind != KindFolder {
 		return Node{}, NewError(CodeInvalid, op, parentID, "parent is not a folder")
 	}
+	depth, err := ancestorDepth(ctx, tx, parentID)
+	if err != nil {
+		return Node{}, err
+	}
+	if depth+1 > 100 {
+		return Node{}, NewError(CodeInvalid, op, parentID, "folder depth would exceed 100")
+	}
 	if err := checkItemLimit(ctx, tx, access.OwnerID, 1); err != nil {
 		return Node{}, err
 	}
@@ -271,6 +278,17 @@ func (s *Service) Move(ctx context.Context, actorID, nodeID, destinationID strin
 		if !errors.Is(err, sql.ErrNoRows) {
 			return Node{}, WrapError(CodeInvalid, op, nodeID, err)
 		}
+	}
+	destinationDepth, err := ancestorDepth(ctx, tx, destinationID)
+	if err != nil {
+		return Node{}, err
+	}
+	subtreeHeight, err := descendantHeight(ctx, tx, nodeID)
+	if err != nil {
+		return Node{}, err
+	}
+	if destinationDepth+1+subtreeHeight > 100 {
+		return Node{}, NewError(CodeInvalid, op, nodeID, "move would exceed the maximum tree depth of 100")
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE nodes SET parent_id = ?, revision = revision + 1, updated_at = ?
         WHERE id = ? AND revision = ?`, destinationID, timeText(s.now()), nodeID, expectedRevision)
@@ -423,6 +441,38 @@ func checkItemLimit(ctx context.Context, q database.Queryer, ownerID string, add
 		return NewError(CodeItemLimit, "check item limit", ownerID, "item limit would be exceeded")
 	}
 	return nil
+}
+
+func ancestorDepth(ctx context.Context, q database.Queryer, nodeID string) (int, error) {
+	var depth int
+	err := q.QueryRowContext(ctx, `WITH RECURSIVE ancestors(id, parent_id, depth) AS (
+		SELECT id, parent_id, 0 FROM nodes WHERE id = ?
+		UNION ALL SELECT n.id, n.parent_id, a.depth + 1
+		FROM nodes n JOIN ancestors a ON n.id = a.parent_id WHERE a.depth <= 100
+	) SELECT COALESCE(MAX(depth), 0) FROM ancestors`, nodeID).Scan(&depth)
+	if err != nil {
+		return 0, WrapError(CodeInvalid, "measure ancestor depth", nodeID, err)
+	}
+	if depth > 100 {
+		return 0, NewError(CodeInvalidState, "measure ancestor depth", nodeID, "tree exceeds maximum depth")
+	}
+	return depth, nil
+}
+
+func descendantHeight(ctx context.Context, q database.Queryer, nodeID string) (int, error) {
+	var height int
+	err := q.QueryRowContext(ctx, `WITH RECURSIVE descendants(id, depth) AS (
+		SELECT id, 0 FROM nodes WHERE id = ?
+		UNION ALL SELECT n.id, d.depth + 1
+		FROM nodes n JOIN descendants d ON n.parent_id = d.id WHERE d.depth <= 100
+	) SELECT COALESCE(MAX(depth), 0) FROM descendants`, nodeID).Scan(&height)
+	if err != nil {
+		return 0, WrapError(CodeInvalid, "measure subtree height", nodeID, err)
+	}
+	if height > 100 {
+		return 0, NewError(CodeInvalidState, "measure subtree height", nodeID, "tree exceeds maximum depth")
+	}
+	return height, nil
 }
 
 const nodeSelect = `SELECT n.id, n.owner_id, n.parent_id, n.kind, n.name, n.mime_type,
