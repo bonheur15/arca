@@ -140,7 +140,7 @@ func (s *ChallengeStore) createToken(ipAddress, userAgent string) (string, error
 		return "", err
 	}
 	payload, err := json.Marshal(challengeTokenPayload{
-		Nonce: base64.RawURLEncoding.EncodeToString(random),
+		Nonce:     base64.RawURLEncoding.EncodeToString(random),
 		IPAddress: ipAddress, UserAgent: truncate(userAgent, 512),
 	})
 	if err != nil {
