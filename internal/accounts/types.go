@@ -162,3 +162,13 @@ type MutationContext struct {
 	UserAgent string
 	RequestID string
 }
+
+type SupportAccess struct {
+	ID           string     `json:"id"`
+	ActorID      string     `json:"actor_id"`
+	TargetUserID string     `json:"target_user_id"`
+	Reason       string     `json:"reason"`
+	ExpiresAt    time.Time  `json:"expires_at"`
+	RevokedAt    *time.Time `json:"revoked_at,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
+}
