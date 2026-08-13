@@ -34,3 +34,12 @@ func (c *StatusTokenCodec) Hash(plaintext string) []byte {
 	_, _ = mac.Write([]byte(plaintext))
 	return mac.Sum(nil)
 }
+
+// HashRequesterIP creates an unlinkable-at-rest abuse-control key. Callers
+// should store this rather than the raw IP address on anonymous requests.
+func (c *StatusTokenCodec) HashRequesterIP(ipAddress string) []byte {
+	mac := hmac.New(sha256.New, c.secret)
+	_, _ = mac.Write([]byte("arca:access-request-ip:v1\x00"))
+	_, _ = mac.Write([]byte(ipAddress))
+	return mac.Sum(nil)
+}
