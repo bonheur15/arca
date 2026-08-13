@@ -37,16 +37,16 @@ type bootstrapPending struct {
 }
 
 type BootstrapConfigureInput struct {
-	SetupCode       string `json:"setup_code"`
-	InstanceName    string `json:"instance_name"`
-	PublicURL       string `json:"public_url"`
-	WorkOSClientID  string `json:"workos_client_id"`
-	WorkOSAPIKey    string `json:"workos_api_key"`
-	Username        string `json:"username"`
-	Email           string `json:"email"`
-	DisplayName     string `json:"display_name"`
-	QuotaBytes      int64  `json:"quota_bytes"`
-	QuotaUnlimited  bool   `json:"quota_unlimited"`
+	SetupCode      string `json:"setup_code"`
+	InstanceName   string `json:"instance_name"`
+	PublicURL      string `json:"public_url"`
+	WorkOSClientID string `json:"workos_client_id"`
+	WorkOSAPIKey   string `json:"workos_api_key"`
+	Username       string `json:"username"`
+	Email          string `json:"email"`
+	DisplayName    string `json:"display_name"`
+	QuotaBytes     int64  `json:"quota_bytes"`
+	QuotaUnlimited bool   `json:"quota_unlimited"`
 }
 
 type BootstrapStatus struct {
@@ -78,6 +78,25 @@ func (b *Bootstrap) Status(ctx context.Context) (BootstrapStatus, error) {
 	expires := b.expires
 	b.mu.Unlock()
 	return BootstrapStatus{Initialized: initialized, SetupRequired: !initialized, ExpiresAt: expires}, nil
+}
+
+// ValidateCode performs the first setup gate without returning persisted
+// configuration or other instance details. Setup handlers use it before
+// revealing the configuration form.
+func (b *Bootstrap) ValidateCode(ctx context.Context, code string) error {
+	initialized, err := b.initialized(ctx)
+	if err != nil {
+		return err
+	}
+	if initialized {
+		return errors.New("setup is permanently disabled")
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.now().After(b.expires) || !equalHash(b.codeHash[:], hashString(code)) {
+		return errors.New("invalid or expired setup code")
+	}
+	return nil
 }
 
 // Configure validates the console code, persists the operator configuration,
