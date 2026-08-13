@@ -22,6 +22,7 @@ type AuthService struct {
 	cookiePassword string
 	csrfSecret     []byte
 	db             *sql.DB
+	limiter        AttemptLimiter
 	now            func() time.Time
 }
 
@@ -42,7 +43,16 @@ func NewService(accountRepository *accounts.Repository, challenges *ChallengeSto
 		accounts: accountRepository, challenges: challenges, provider: provider,
 		audit: recorder, cookiePassword: cookiePassword,
 		csrfSecret: append([]byte(nil), csrfSecret...), db: db, now: time.Now,
+		limiter: NewMemoryLimiter(),
 	}, nil
+}
+
+// SetAttemptLimiter replaces the default single-process limiter, primarily for
+// deterministic tests or a future durable implementation.
+func (s *AuthService) SetAttemptLimiter(limiter AttemptLimiter) {
+	if limiter != nil {
+		s.limiter = limiter
+	}
 }
 
 type MagicStartResult struct {
@@ -59,6 +69,14 @@ func (s *AuthService) StartMagic(ctx context.Context, request MagicStartRequest)
 		return nil, err
 	}
 	request.Email = email
+	if err := s.allowAttempt(ctx, "magic:start:email:"+emailKey, 5, 10*time.Minute); err != nil {
+		return nil, err
+	}
+	if request.IPAddress != "" {
+		if err := s.allowAttempt(ctx, "magic:start:ip:"+request.IPAddress, 10, 10*time.Minute); err != nil {
+			return nil, err
+		}
+	}
 	expiresAt := s.now().UTC().Add(10 * time.Minute)
 	magicID, radarID := "", ""
 	user, lookupErr := s.accounts.GetUserByEmail(ctx, email)
@@ -104,6 +122,14 @@ func (s *AuthService) VerifyMagic(ctx context.Context, challengeToken, code stri
 	if err != nil {
 		s.recordFailure(ctx, "invalid_challenge")
 		return nil, ErrInvalidCredentials
+	}
+	if err := s.allowAttempt(ctx, "magic:verify:email:"+challenge.EmailKey, 10, 10*time.Minute); err != nil {
+		return nil, err
+	}
+	if challenge.OriginalIPAddress != "" {
+		if err := s.allowAttempt(ctx, "magic:verify:ip:"+challenge.OriginalIPAddress, 20, 10*time.Minute); err != nil {
+			return nil, err
+		}
 	}
 	if challenge.MagicAuthID == "" {
 		s.recordFailure(ctx, "invalid_challenge")
@@ -297,4 +323,12 @@ func optionalID(value string) *string {
 		return nil
 	}
 	return &value
+}
+
+func (s *AuthService) allowAttempt(ctx context.Context, key string, limit int, window time.Duration) error {
+	allowed, retryAfter := s.limiter.Allow(ctx, key, limit, window)
+	if allowed {
+		return nil
+	}
+	return &RateLimitError{RetryAfter: retryAfter}
 }
