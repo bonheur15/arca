@@ -51,7 +51,30 @@ func (r *Repository) CreateAccessRequest(ctx context.Context, params CreateAcces
 		nullIfEmpty(reason), statusTokenHash, nullableBytes(params.RequesterIPHash), formatTime(now),
 	)
 	if err != nil {
-		return nil, classifyWriteError("create access request", err)
+		classified := classifyWriteError("create access request", err)
+		if !errors.Is(classified, ErrConflict) {
+			return nil, classified
+		}
+		// An exact repeat rotates the opaque status token without changing
+		// the original request content or timestamp. Collisions on only one
+		// identity field remain conflicts and must receive a generic response
+		// from the transport layer.
+		result, rotateErr := r.db.ExecContext(ctx, `
+			UPDATE access_requests SET status_token_hash = ?, requester_ip_hash = ?
+			WHERE username_key = ? AND email_key = ? AND state = 'pending'`,
+			statusTokenHash, nullableBytes(params.RequesterIPHash), usernameKey, emailKey)
+		if rotateErr != nil {
+			return nil, fmt.Errorf("accounts: rotate request status token: %w", rotateErr)
+		}
+		if changed, _ := result.RowsAffected(); changed != 1 {
+			return nil, ErrConflict
+		}
+		request, getErr := scanAccessRequest(r.db.QueryRowContext(ctx, accessRequestSelect+`
+			WHERE username_key = ? AND email_key = ? AND state = 'pending'`, usernameKey, emailKey))
+		if getErr != nil {
+			return nil, fmt.Errorf("accounts: read repeated access request: %w", getErr)
+		}
+		return request, nil
 	}
 	return &AccessRequest{
 		ID: id, Username: username, UsernameKey: usernameKey, Email: email,
