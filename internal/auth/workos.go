@@ -73,9 +73,9 @@ func reconcileIdentity(id, email string, externalID *string, request accounts.Id
 func (p *WorkOSProvider) SendMagic(ctx context.Context, request MagicStartRequest) (MagicChallenge, error) {
 	response, err := p.client.UserManagement().CreateMagicAuth(ctx, &workos.UserManagementCreateMagicAuthParams{
 		Email: request.Email, IPAddress: optionalString(request.IPAddress),
-		UserAgent: optionalString(request.UserAgent),
+		UserAgent:          optionalString(request.UserAgent),
 		RadarAuthAttemptID: optionalString(request.RadarAuthAttemptID),
-		SignalsID: optionalString(request.SignalsID),
+		SignalsID:          optionalString(request.SignalsID),
 	})
 	if err != nil {
 		return MagicChallenge{}, fmt.Errorf("auth: create WorkOS Magic Auth challenge: %w", err)
