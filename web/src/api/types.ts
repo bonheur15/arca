@@ -47,6 +47,16 @@ export interface Session {
   csrfToken: string | null;
 }
 
+export interface SessionRecord {
+  id: string;
+  userAgent: string;
+  ipAddress: string | null;
+  current: boolean;
+  createdAt: string;
+  lastActiveAt: string;
+  expiresAt: string | null;
+}
+
 export interface BootstrapStatus {
   initialized: boolean;
   instanceName: string;
