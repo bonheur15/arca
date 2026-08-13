@@ -149,6 +149,26 @@ func (r *Repository) CompleteProvisioning(ctx context.Context, userID, workosUse
 	return user, nil
 }
 
+// UpdateIdentityEmail reconciles an email update originating from the identity
+// provider. WorkOS user ID, rather than email, remains the immutable link.
+func (r *Repository) UpdateIdentityEmail(ctx context.Context, workosUserID, email string) (*User, error) {
+	email, emailKey, err := NormalizeEmail(email)
+	if err != nil {
+		return nil, err
+	}
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE users SET email = ?, email_key = ?, updated_at = ?
+		WHERE workos_user_id = ? AND state <> 'deleted'`,
+		email, emailKey, formatTime(r.now().UTC()), workosUserID)
+	if err != nil {
+		return nil, classifyWriteError("reconcile identity email", err)
+	}
+	if changed, _ := result.RowsAffected(); changed == 0 {
+		return nil, ErrNotFound
+	}
+	return r.GetUserByWorkOSID(ctx, workosUserID)
+}
+
 func (r *Repository) GetUserByID(ctx context.Context, id string) (*User, error) {
 	return r.getUser(ctx, `WHERE id = ?`, id)
 }
