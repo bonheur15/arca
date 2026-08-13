@@ -261,9 +261,8 @@ func (s *AuthService) Logout(ctx context.Context, sealedSession string) error {
 }
 
 func (s *AuthService) RevokeSession(ctx context.Context, sessionID, userID string, expiresAt time.Time, actor accounts.MutationContext) error {
-	admin, err := s.accounts.GetUserByID(ctx, actor.ActorID)
-	if err != nil || admin.Role != accounts.RoleSuperadmin || !admin.State.CanAuthenticate() {
-		return ErrForbidden
+	if err := s.authorizeSessionOwner(ctx, userID, actor.ActorID); err != nil {
+		return err
 	}
 	if err := s.revokeLocally(ctx, sessionID, userID, expiresAt); err != nil {
 		return err
