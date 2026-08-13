@@ -143,6 +143,71 @@ func TestPersonalAccessTokenLifecycle(t *testing.T) {
 	}
 }
 
+func TestEventReconcilerUpdatesIdentityRevokesSessionAndSuspends(t *testing.T) {
+	db := openAuthTestDB(t)
+	repository := accounts.NewRepository(db.Writer())
+	user, err := repository.CreateUser(context.Background(), accounts.CreateUserParams{
+		Username: "alice", Email: "alice@example.com", Role: accounts.RoleMember,
+		State: accounts.StateProvisioning, QuotaBytes: 1_000, Policy: accounts.DefaultPolicy(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.CompleteProvisioning(context.Background(), user.ID, "workos_alice"); err != nil {
+		t.Fatal(err)
+	}
+	secret := randomSecret(t)
+	challenges, _ := NewChallengeStore(db.Writer(), secret)
+	provider := &fakeProvider{}
+	authService, _ := NewService(repository, challenges, provider, db.Writer(), "cookie-password", secret, audit.NopRecorder{})
+	source := &fakeEventSource{events: []IdentityEvent{
+		{ID: "evt_1", Kind: EventUserUpdated, WorkOSUserID: "workos_alice", Email: "alice.new@example.com"},
+		{ID: "evt_2", Kind: EventSessionRevoked, WorkOSUserID: "workos_alice", SessionID: "session_1", ExpiresAt: time.Now().Add(time.Hour)},
+		{ID: "evt_3", Kind: EventUserDeleted, WorkOSUserID: "workos_alice"},
+	}, next: "evt_3"}
+	reconciler, err := NewEventReconciler(db.Writer(), repository, authService, source, audit.NopRecorder{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	count, err := reconciler.PollOnce(context.Background(), 100)
+	if err != nil || count != 3 {
+		t.Fatalf("poll count = %d, err = %v", count, err)
+	}
+	updated, err := repository.GetUserByID(context.Background(), user.ID)
+	if err != nil || updated.Email != "alice.new@example.com" || updated.State != accounts.StateSuspended {
+		t.Fatalf("updated user = %#v, err = %v", updated, err)
+	}
+	revoked, err := authService.isLocallyRevoked(context.Background(), "session_1")
+	if err != nil || !revoked {
+		t.Fatalf("revoked = %t, err = %v", revoked, err)
+	}
+	var cursor string
+	if err := db.Reader().QueryRow(`SELECT cursor FROM workos_event_cursor WHERE singleton = 1`).Scan(&cursor); err != nil || cursor != "evt_3" {
+		t.Fatalf("cursor = %q, err = %v", cursor, err)
+	}
+}
+
+func TestMemoryLimiter(t *testing.T) {
+	limiter := NewMemoryLimiter()
+	now := time.Date(2026, time.August, 14, 0, 0, 0, 0, time.UTC)
+	limiter.now = func() time.Time { return now }
+	for range 2 {
+		allowed, _ := limiter.Allow(context.Background(), "email", 2, time.Minute)
+		if !allowed {
+			t.Fatal("attempt unexpectedly denied")
+		}
+	}
+	allowed, retry := limiter.Allow(context.Background(), "email", 2, time.Minute)
+	if allowed || retry != time.Minute {
+		t.Fatalf("limited = %t, retry = %s", !allowed, retry)
+	}
+	now = now.Add(time.Minute)
+	allowed, _ = limiter.Allow(context.Background(), "email", 2, time.Minute)
+	if !allowed {
+		t.Fatal("attempt remained denied after window")
+	}
+}
+
 type fakeProvider struct {
 	startCalls   int
 	start        MagicStartRequest
@@ -150,6 +215,17 @@ type fakeProvider struct {
 	workosUserID string
 	email        string
 	revoked      []string
+}
+
+type fakeEventSource struct {
+	events []IdentityEvent
+	next   string
+	after  string
+}
+
+func (f *fakeEventSource) ListIdentityEvents(_ context.Context, after string, _ int) ([]IdentityEvent, string, error) {
+	f.after = after
+	return f.events, f.next, nil
 }
 
 func (f *fakeProvider) SendMagic(_ context.Context, request MagicStartRequest) (MagicChallenge, error) {
