@@ -16,6 +16,7 @@ var (
 	ErrInvalidCSRF        = errors.New("auth: invalid csrf token")
 	ErrInvalidToken       = errors.New("auth: invalid access token")
 	ErrTokenPolicy        = errors.New("auth: personal access tokens are disabled")
+	ErrRateLimited        = errors.New("auth: too many attempts")
 )
 
 type MagicStartRequest struct {
