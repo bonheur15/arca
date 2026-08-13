@@ -1,0 +1,16 @@
+/arca
+/dist/
+/arca-data/
+/coverage/
+*.prof
+*.test
+.DS_Store
+.env
+.env.*
+!.env.example
+web/node_modules/
+web/dist/*
+!web/dist/.keep
+web/coverage/
+web/playwright-report/
+web/test-results/
