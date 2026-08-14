@@ -85,11 +85,12 @@ interface FileSearch {
 }
 
 function validateFileSearch(search: Record<string, unknown>): FileSearch {
+  const supportUserId = normalizeSupportUser(search.support_user);
   return {
     ...(search.view === "grid" || search.view === "list" ? { view: search.view } : {}),
     ...(typeof search.sort === "string" ? { sort: search.sort } : {}),
     ...(search.order === "desc" || search.order === "asc" ? { order: search.order } : {}),
-    ...(normalizeSupportUser(search.support_user) ? { support_user: normalizeSupportUser(search.support_user) } : {}),
+    ...(supportUserId ? { support_user: supportUserId } : {}),
   };
 }
 
