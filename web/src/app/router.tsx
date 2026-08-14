@@ -7,6 +7,7 @@ import { AppShell } from "../components/AppShell";
 import { ArcaMark } from "../components/ArcaMark";
 import { Button, ErrorState, LoadingState } from "../components/Primitives";
 import { UploadProvider } from "../features/uploads/UploadManager";
+import { normalizeSupportUser } from "../features/files/supportMode";
 import { useAppearance } from "./appearance";
 
 const FileBrowser = lazy(() => import("../features/files/FileViews").then((module) => ({ default: module.FileBrowser })));
@@ -80,6 +81,7 @@ interface FileSearch {
   view?: "grid" | "list";
   sort?: string;
   order?: "asc" | "desc";
+  support_user?: string;
 }
 
 function validateFileSearch(search: Record<string, unknown>): FileSearch {
@@ -87,6 +89,7 @@ function validateFileSearch(search: Record<string, unknown>): FileSearch {
     ...(search.view === "grid" || search.view === "list" ? { view: search.view } : {}),
     ...(typeof search.sort === "string" ? { sort: search.sort } : {}),
     ...(search.order === "desc" || search.order === "asc" ? { order: search.order } : {}),
+    ...(normalizeSupportUser(search.support_user) ? { support_user: normalizeSupportUser(search.support_user) } : {}),
   };
 }
 
@@ -97,8 +100,8 @@ function validateGlobalSearch(search: Record<string, unknown>): FileSearch & { q
   };
 }
 
-const filesRoute = createRoute({ getParentRoute: () => rootRoute, path: "/files", validateSearch: validateFileSearch, component: () => <ProtectedPage>{() => <FileBrowser collection="files" />}</ProtectedPage> });
-const folderRoute = createRoute({ getParentRoute: () => rootRoute, path: "/files/$folderId", validateSearch: validateFileSearch, component: () => { const { folderId } = folderRoute.useParams(); return <ProtectedPage>{() => <FileBrowser collection="files" folderId={folderId} />}</ProtectedPage>; } });
+const filesRoute = createRoute({ getParentRoute: () => rootRoute, path: "/files", validateSearch: validateFileSearch, component: () => { const { support_user: supportUserId } = filesRoute.useSearch(); return <ProtectedPage>{() => <FileBrowser collection="files" supportUserId={supportUserId} />}</ProtectedPage>; } });
+const folderRoute = createRoute({ getParentRoute: () => rootRoute, path: "/files/$folderId", validateSearch: validateFileSearch, component: () => { const { folderId } = folderRoute.useParams(); const { support_user: supportUserId } = folderRoute.useSearch(); return <ProtectedPage>{() => <FileBrowser collection="files" folderId={folderId} supportUserId={supportUserId} />}</ProtectedPage>; } });
 const recentRoute = createRoute({ getParentRoute: () => rootRoute, path: "/recent", validateSearch: validateFileSearch, component: () => <ProtectedPage>{() => <FileBrowser collection="recent" />}</ProtectedPage> });
 const starredRoute = createRoute({ getParentRoute: () => rootRoute, path: "/starred", validateSearch: validateFileSearch, component: () => <ProtectedPage>{() => <FileBrowser collection="favorites" />}</ProtectedPage> });
 const sharedRoute = createRoute({ getParentRoute: () => rootRoute, path: "/shared", validateSearch: validateFileSearch, component: () => <ProtectedPage>{() => <FileBrowser collection="shared" />}</ProtectedPage> });
