@@ -696,6 +696,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/public/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["downloadPublicArchive"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/public/files/{nodeId}/content": {
         parameters: {
             query?: never;
@@ -2109,6 +2125,27 @@ export interface operations {
         requestBody?: never;
         responses: {
             200: components["responses"]["List"];
+            default: components["responses"]["Problem"];
+        };
+    };
+    downloadPublicArchive: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Streamed ZIP64 public bundle */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/zip": string;
+                };
+            };
             default: components["responses"]["Problem"];
         };
     };
