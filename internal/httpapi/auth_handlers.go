@@ -209,6 +209,19 @@ func (s *Server) session(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, map[string]any{"authenticated": true, "user": user, "csrf_token": authenticated.CSRFToken})
 }
 
+// refresh returns the session that the authentication middleware has already
+// validated (and, when necessary, rotated). Keeping the handler itself free of
+// a second WorkOS call prevents two refresh-token rotations in one request.
+func (s *Server) refresh(w http.ResponseWriter, r *http.Request) {
+	p := principal(r)
+	user, err := s.runtime.AccountRepo.GetUserByID(r.Context(), p.UserID)
+	if err != nil {
+		s.handleError(w, r, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, map[string]any{"authenticated": true, "user": user, "csrf_token": p.CSRFToken})
+}
+
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	policy := s.cookiePolicy()
 	sealed, _ := auth.ReadCookie(r, policy.SessionName())
