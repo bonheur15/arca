@@ -19,8 +19,10 @@ import (
 	"arca/internal/accounts"
 	"arca/internal/app"
 	"arca/internal/audit"
+	"arca/internal/config"
 	"arca/internal/database"
 	"arca/internal/files"
+	"arca/internal/shares"
 	"arca/internal/uploads"
 	"arca/migrations"
 
@@ -33,6 +35,7 @@ type fileHandlerFixture struct {
 	storage   *uploads.LocalStorage
 	files     *files.Service
 	uploads   *uploads.Service
+	shares    *shares.Service
 	repo      *accounts.Repository
 	owner     *accounts.User
 	recipient *accounts.User
@@ -80,15 +83,25 @@ func newFileHandlerFixture(t *testing.T) *fileHandlerFixture {
 	}
 	fileService := files.NewService(db, files.ServiceOptions{})
 	uploadService := uploads.NewService(db, storage, uploads.ServiceOptions{MaxChunkBytes: 32})
+	shareService, err := shares.New(db.Writer(), bytes.Repeat([]byte{0x42}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
 	recorder := audit.NewSQLRecorder(db.Writer())
 	accountService := accounts.NewService(repo, nil, nil, recorder)
+	configRuntime := &config.Runtime{File: config.FileConfig{PublicURL: "http://localhost:8080"}}
 	runtime := &app.Runtime{
+		Config:   configRuntime,
 		Database: db, Accounts: accountService, AccountRepo: repo, Files: fileService, Uploads: uploadService,
-		Storage: storage, Audit: recorder,
+		Storage: storage, Shares: shareService, Audit: recorder,
 	}
-	server := &Server{runtime: runtime, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	server := &Server{
+		runtime: runtime, logger: slog.New(slog.NewTextHandler(io.Discard, nil)), limiter: NewLimiter(),
+		idempotency: NewIdempotencyStore(db.Writer()), events: NewHub(),
+	}
+	server.router = server.routes()
 	return &fileHandlerFixture{server: server, db: db, storage: storage, files: fileService, uploads: uploadService,
-		repo: repo, owner: owner, recipient: recipient, admin: admin}
+		shares: shareService, repo: repo, owner: owner, recipient: recipient, admin: admin}
 }
 
 func (f *fileHandlerFixture) uploadFile(t *testing.T, actorID, parentID, name string, contents []byte) files.Node {
