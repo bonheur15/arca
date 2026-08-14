@@ -38,6 +38,13 @@ func (s *Server) publicArchive(w http.ResponseWriter, r *http.Request) {
 		s.handleError(w, r, err)
 		return
 	}
+	// Revalidate the public session immediately before committing response
+	// headers; later file iterations revalidate each node again.
+	active, err := s.runtime.Shares.ResolvePublicSession(r.Context(), publicCookieValue(s, r))
+	if err != nil || active.ShareID != session.ShareID {
+		s.genericPublicFailure(w, r)
+		return
+	}
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": "arca-shared.zip"}))
 	w.Header().Set("Cache-Control", "no-store")
@@ -58,6 +65,12 @@ func (s *Server) publicArchive(w http.ResponseWriter, r *http.Request) {
 		resolved, err := s.resolvePublicContent(r, entry.Node.ID)
 		if err != nil {
 			s.logger.Warn("public archive content changed during stream", "request_id", RequestID(r.Context()), "node_id", entry.Node.ID, "error", err)
+			return
+		}
+		active, activeErr := s.runtime.Shares.ResolvePublicSession(r.Context(), publicCookieValue(s, r))
+		allowed, allowedErr := s.runtime.Shares.CanAccessPublicNode(r.Context(), session.ShareID, entry.Node.ID)
+		if activeErr != nil || active.ShareID != session.ShareID || allowedErr != nil || !allowed {
+			s.logger.Warn("public archive permission changed during stream", "request_id", RequestID(r.Context()), "node_id", entry.Node.ID)
 			return
 		}
 		reader, err := s.runtime.Storage.OpenBlob(resolved.StorageKey)
