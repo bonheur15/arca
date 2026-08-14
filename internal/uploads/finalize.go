@@ -84,6 +84,11 @@ func (s *Service) finalizeLocked(ctx context.Context, uploadID string) (Upload, 
 		if mimeErr != nil {
 			return Upload{}, mimeErr
 		}
+		if policyErr := validateMIMEPolicy(ctx, s.db.Reader(), upload.OwnerID, mimeType); policyErr != nil {
+			releaseErr := s.releaseReservation(ctx, upload, StateFailed, string(files.CodeFileTypeBlocked))
+			removeErr := s.storage.RemoveStaging(uploadID)
+			return Upload{}, errors.Join(policyErr, releaseErr, removeErr)
+		}
 		if err := s.storage.Finalize(uploadID, blobKey); err != nil {
 			return Upload{}, files.WrapError(files.CodeInvalid, "finalize upload", uploadID, err)
 		}
@@ -111,6 +116,11 @@ func (s *Service) finalizeLocked(ctx context.Context, uploadID string) (Upload, 
 	mimeType, mimeErr := detectMIME(s.storage, blobKey, true)
 	if mimeErr != nil {
 		return Upload{}, mimeErr
+	}
+	if policyErr := validateMIMEPolicy(ctx, s.db.Reader(), upload.OwnerID, mimeType); policyErr != nil {
+		releaseErr := s.releaseReservation(ctx, upload, StateFailed, string(files.CodeFileTypeBlocked))
+		quarantineErr := s.storage.QuarantineBlob(blobKey)
+		return Upload{}, errors.Join(policyErr, releaseErr, quarantineErr)
 	}
 	return s.finishMetadata(ctx, upload, blobKey, hex.EncodeToString(hash.Sum(nil)), mimeType)
 }
