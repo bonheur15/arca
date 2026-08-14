@@ -3,10 +3,12 @@ module arca
 go 1.25.0
 
 require (
+	github.com/go-chi/chi/v5 v5.3.1
 	github.com/google/uuid v1.6.0
 	github.com/workos/workos-go/v10 v10.3.0
 	golang.org/x/sys v0.47.0
 	golang.org/x/text v0.28.0
+	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.56.0
 )
 
