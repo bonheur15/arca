@@ -134,6 +134,7 @@ function CommandPalette({ open, onOpenChange, user }: { open: boolean; onOpenCha
 
 export function AppShell({ user, children }: { user: User; children: ReactNode }) {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const [mobileNav, setMobileNav] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
@@ -165,6 +166,24 @@ export function AppShell({ user, children }: { user: User; children: ReactNode }
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
   }, []);
+
+  useEffect(() => {
+    const source = new EventSource("/api/v1/events", { withCredentials: true });
+    const refreshFiles = () => { void queryClient.invalidateQueries({ queryKey: ["nodes"] }); };
+    const refreshShares = () => {
+      void queryClient.invalidateQueries({ queryKey: ["shares"] });
+      void queryClient.invalidateQueries({ queryKey: ["nodes", "shared"] });
+    };
+    const refreshQuota = () => { void queryClient.invalidateQueries({ queryKey: ["session"] }); };
+    const refreshJobs = () => { void queryClient.invalidateQueries({ queryKey: ["admin-jobs"] }); };
+    const refreshSession = () => { void queryClient.invalidateQueries({ queryKey: ["session"] }); };
+    source.addEventListener("file", refreshFiles);
+    source.addEventListener("quota", refreshQuota);
+    source.addEventListener("share", refreshShares);
+    source.addEventListener("job", refreshJobs);
+    source.addEventListener("revocation", refreshSession);
+    return () => source.close();
+  }, [queryClient]);
 
   const handleSearch = (event: React.FormEvent) => {
     event.preventDefault();
