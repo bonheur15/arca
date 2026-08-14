@@ -2,6 +2,7 @@ package database_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -43,6 +44,18 @@ func TestOpenMigrateAndImmediateTransaction(t *testing.T) {
 	}
 	if err := db.Check(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+	for _, path := range []string{db.Path(), db.Path() + "-wal", db.Path() + "-shm"} {
+		info, err := os.Stat(path)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != 0o600 {
+			t.Errorf("%s permissions = %04o", filepath.Base(path), info.Mode().Perm())
+		}
 	}
 }
 
@@ -96,6 +109,28 @@ func TestOpenRejectsDatabaseSymlink(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("database symlink was accepted")
+	}
+}
+
+func TestOpenRejectsWALSymlink(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target")
+	if err := os.WriteFile(target, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	databasePath := filepath.Join(dir, "arca.sqlite3")
+	if err := os.Symlink(target, databasePath+"-wal"); err != nil {
+		t.Fatal(err)
+	}
+	_, err := database.Open(context.Background(), database.Config{
+		Path: databasePath,
+		Migrations: fstest.MapFS{
+			"001_test.sql": {Data: []byte("CREATE TABLE widgets (id INTEGER);")},
+		},
+	})
+	if err == nil {
+		t.Fatal("WAL symlink was accepted")
 	}
 }
 
