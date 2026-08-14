@@ -2,6 +2,7 @@ package files
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -109,6 +110,19 @@ func TestFileTreeLifecycle(t *testing.T) {
 	if err != nil || len(search.Items) != 1 || search.Items[0].ID != docs.ID {
 		t.Fatalf("search = %+v, error = %v", search, err)
 	}
+	copied, err := service.Copy(context.Background(), CopyRequest{
+		ActorID: "user-one", NodeID: docs.ID, DestinationID: root.ID, KeepBoth: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if copied.Name != "Documents (1)" {
+		t.Fatalf("copy name = %q", copied.Name)
+	}
+	copiedChildren, err := service.List(context.Background(), "user-one", copied.ID, ListOptions{})
+	if err != nil || len(copiedChildren.Items) != 1 || copiedChildren.Items[0].Name != "Child" {
+		t.Fatalf("copied children = %+v, error = %v", copiedChildren, err)
+	}
 	trashed, err := service.Trash(context.Background(), "user-one", docs.ID, renamed.Revision)
 	if err != nil {
 		t.Fatal(err)
@@ -126,6 +140,43 @@ func TestFileTreeLifecycle(t *testing.T) {
 	}
 	if restored.TrashedAt != nil || restored.ParentID == nil || *restored.ParentID != root.ID {
 		t.Fatalf("restored node = %+v", restored)
+	}
+
+	created := timeText(testNow)
+	if _, err := db.Writer().Exec(`INSERT INTO blobs
+		(id, owner_id, storage_key, size_bytes, sha256, state, ref_count, created_at)
+		VALUES ('blob-id', 'user-one', 'blob-key', 5, 'hash', 'ready', 1, ?)`, created); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Writer().Exec(`INSERT INTO nodes
+		(id, owner_id, parent_id, kind, name, name_key, mime_type, size_bytes, current_version_id,
+		 revision, created_by, created_at, updated_at)
+		VALUES ('file-id', 'user-one', ?, 'file', 'data.txt', 'data.txt', 'text/plain', 5, 'version-id',
+		 1, 'user-one', ?, ?)`, docs.ID, created, created); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Writer().Exec(`INSERT INTO file_versions
+		(id, node_id, blob_id, sequence, size_bytes, sha256, mime_type, created_by, created_at)
+		VALUES ('version-id', 'file-id', 'blob-id', 1, 5, 'hash', 'text/plain', 'user-one', ?)`, created); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Writer().Exec("UPDATE users SET used_bytes = 5 WHERE id = 'user-one'"); err != nil {
+		t.Fatal(err)
+	}
+	trashedAgain, err := service.Trash(context.Background(), "user-one", docs.ID, restored.Revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	purged, err := service.Purge(context.Background(), "user-one", docs.ID, trashedAgain.Revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if purged.NodesDeleted != 3 || purged.BlobsQueued != 1 {
+		t.Fatalf("purge result = %+v", purged)
+	}
+	quota, err := service.Quota(context.Background(), "user-one")
+	if err != nil || quota.StoredUsedBytes != 0 || quota.ActualUsedBytes != 0 || quota.Drift {
+		t.Fatalf("quota after purge = %+v, error = %v", quota, err)
 	}
 }
 
@@ -172,5 +223,73 @@ func TestEditorAuthorizationUsesLiveFolderAncestry(t *testing.T) {
 	}
 	if _, err := service.Get(context.Background(), "editor-id", child.ID); ErrorCodeOf(err) != CodeForbidden {
 		t.Fatalf("revoked editor still had access: %v", err)
+	}
+}
+
+func TestVersionRetentionAndQuotaReconciliation(t *testing.T) {
+	db := testDatabase(t)
+	addTestUser(t, db, "retention-user", "retention", "member", 100)
+	service := NewService(db, ServiceOptions{Now: func() time.Time { return testNow }})
+	root, err := service.CreateUserRoot(context.Background(), "retention-user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	created := timeText(testNow.Add(-40 * 24 * time.Hour))
+	if _, err := db.Writer().Exec(`INSERT INTO nodes
+		(id, owner_id, parent_id, kind, name, name_key, mime_type, size_bytes, current_version_id,
+		 revision, created_by, created_at, updated_at)
+		VALUES ('history-file', 'retention-user', ?, 'file', 'history.txt', 'history.txt', 'text/plain', 1,
+		 'version-12', 1, 'retention-user', ?, ?)`, root.ID, created, created); err != nil {
+		t.Fatal(err)
+	}
+	for sequence := 1; sequence <= 12; sequence++ {
+		blobID := fmt.Sprintf("blob-%02d", sequence)
+		versionID := fmt.Sprintf("version-%02d", sequence)
+		if _, err := db.Writer().Exec(`INSERT INTO blobs
+			(id, owner_id, storage_key, size_bytes, sha256, state, ref_count, created_at)
+			VALUES (?, 'retention-user', ?, 1, ?, 'ready', 1, ?)`, blobID, "key-"+blobID, "hash-"+blobID, created); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Writer().Exec(`INSERT INTO file_versions
+			(id, node_id, blob_id, sequence, size_bytes, sha256, mime_type, created_by, created_at)
+			VALUES (?, 'history-file', ?, ?, 1, ?, 'text/plain', 'retention-user', ?)`,
+			versionID, blobID, sequence, "hash-"+blobID, created); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Writer().Exec("UPDATE users SET used_bytes = 12 WHERE id = 'retention-user'"); err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.PruneVersions(context.Background(), "retention-user", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.VersionsDeleted != 2 || result.BlobsQueued != 2 || result.BytesReleased != 2 {
+		t.Fatalf("retention result = %+v", result)
+	}
+	versions, err := service.ListVersions(context.Background(), "retention-user", "history-file")
+	if err != nil || len(versions) != 10 || versions[len(versions)-1].Sequence != 3 {
+		t.Fatalf("retained versions = %+v, error = %v", versions, err)
+	}
+	if _, err := db.Writer().Exec("UPDATE users SET used_bytes = 99, reserved_bytes = 5 WHERE id = 'retention-user'"); err != nil {
+		t.Fatal(err)
+	}
+	status, err := service.Quota(context.Background(), "retention-user")
+	if err != nil || !status.Drift || status.ActualUsedBytes != 10 || status.ActualReservedBytes != 0 {
+		t.Fatalf("drift status = %+v, error = %v", status, err)
+	}
+	status, err = service.ReconcileQuota(context.Background(), "retention-user")
+	if err != nil || status.Drift || status.StoredUsedBytes != 10 || status.StoredReservedBytes != 0 {
+		t.Fatalf("reconciled status = %+v, error = %v", status, err)
+	}
+	if _, err := db.Writer().Exec("UPDATE users SET quota_bytes = 5 WHERE id = 'retention-user'"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ReconcileQuota(context.Background(), "retention-user"); err != nil {
+		t.Fatal(err)
+	}
+	var state string
+	if err := db.Reader().QueryRow("SELECT state FROM users WHERE id = 'retention-user'").Scan(&state); err != nil || state != "over_quota" {
+		t.Fatalf("quota state = %q, error = %v", state, err)
 	}
 }
