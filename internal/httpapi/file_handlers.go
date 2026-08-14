@@ -182,6 +182,39 @@ func (s *Server) moveNode(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, node)
 }
 
+func (s *Server) copyNode(w http.ResponseWriter, r *http.Request) {
+	if !s.checkScope(w, r, string(auth.ScopeFilesWrite)) {
+		return
+	}
+	var body struct {
+		ParentID    string `json:"parentId"`
+		ParentIDAlt string `json:"parent_id"`
+		Name        string `json:"name"`
+	}
+	if err := decodeBody(w, r, &body); err != nil {
+		WriteProblem(w, r, http.StatusBadRequest, "invalid_request", "Invalid request", err.Error())
+		return
+	}
+	if body.ParentID == "" {
+		body.ParentID = body.ParentIDAlt
+	}
+	p := principal(r)
+	if body.ParentID == "" {
+		user, err := s.runtime.AccountRepo.GetUserByID(r.Context(), p.UserID)
+		if err != nil {
+			s.handleError(w, r, err)
+			return
+		}
+		body.ParentID = user.RootNodeID
+	}
+	node, err := s.runtime.Files.Copy(r.Context(), files.CopyRequest{ActorID: p.UserID, NodeID: chi.URLParam(r, "nodeID"), DestinationID: body.ParentID, Name: body.Name})
+	if err != nil {
+		s.handleError(w, r, err)
+		return
+	}
+	WriteJSON(w, http.StatusCreated, node)
+}
+
 func (s *Server) trashNode(w http.ResponseWriter, r *http.Request) {
 	s.nodeRevisionAction(w, r, s.runtime.Files.Trash)
 }
@@ -371,7 +404,15 @@ func (s *Server) createUpload(w http.ResponseWriter, r *http.Request) {
 		}
 		parentID = user.RootNodeID
 	}
-	upload, err := s.runtime.Uploads.Create(r.Context(), uploads.CreateRequest{ActorID: p.UserID, ParentID: parentID, Name: metadata["filename"], ExpectedBytes: expected, ConflictMode: uploads.ConflictMode(metadata["conflict"]), ReplaceNodeID: metadata["replace_node_id"], ShareID: metadata["share_id"]})
+	replaceRevision := int64(0)
+	if value := metadata["replace_revision"]; value != "" {
+		replaceRevision, err = strconv.ParseInt(value, 10, 64)
+		if err != nil || replaceRevision <= 0 {
+			WriteProblem(w, r, http.StatusBadRequest, "invalid_replace_revision", "Invalid replacement revision", "replace_revision must be a positive base-10 integer.")
+			return
+		}
+	}
+	upload, err := s.runtime.Uploads.Create(r.Context(), uploads.CreateRequest{ActorID: p.UserID, ParentID: parentID, Name: metadata["filename"], ExpectedBytes: expected, ConflictMode: uploads.ConflictMode(metadata["conflict"]), ReplaceNodeID: metadata["replace_node_id"], ReplaceRevision: replaceRevision, ShareID: metadata["share_id"]})
 	if err != nil {
 		s.handleError(w, r, err)
 		return
