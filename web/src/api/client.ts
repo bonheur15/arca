@@ -301,6 +301,7 @@ function parseShare(value: unknown): Share {
   const record = object(value);
   return {
     id: stringAt(record, "", "id"),
+    ownerId: stringAt(record, "", "ownerId", "owner_id"),
     roots: arrayAt(record, "roots").map(parseNode),
     recipients: arrayAt(record, "recipients").map((entry) => {
       const recipient = object(entry);
