@@ -391,9 +391,10 @@ export const api = {
     };
   },
 
-  async nodes(input: { parentId?: string; cursor?: string; sort?: string; order?: string; limit?: number } = {}): Promise<NodePage> {
+  async nodes(input: { parentId?: string; supportUserId?: string; cursor?: string; sort?: string; order?: string; limit?: number } = {}): Promise<NodePage> {
     return parseNodePage(await apiRequest(`/nodes${queryString({
       parent_id: input.parentId,
+      support_user: input.supportUserId,
       cursor: input.cursor,
       sort: input.sort,
       order: input.order,
@@ -410,6 +411,7 @@ export const api = {
   renameNode: async (id: string, name: string, revision: number) => parseNode(unwrap(await apiRequest(`/nodes/${id}`, { method: "PATCH", headers: { "If-Match": `\"${revision}\"` }, body: { name } }))),
   moveNode: (id: string, parentId: string | null, revision: number) => apiRequest(`/nodes/${id}/move`, { method: "POST", headers: { "If-Match": `\"${revision}\"`, "Idempotency-Key": crypto.randomUUID() }, body: { parentId } }),
   copyNode: (id: string, parentId: string | null, revision: number) => apiRequest(`/nodes/${id}/copy`, { method: "POST", headers: { "If-Match": `\"${revision}\"`, "Idempotency-Key": crypto.randomUUID() }, body: { parentId } }),
+  saveCopyNode: (id: string, input: { destinationId: string | null; name: string; conflictMode: "fail" | "keep_both" }) => apiRequest(`/nodes/${id}/save-copy`, { method: "POST", headers: { "Idempotency-Key": crypto.randomUUID() }, body: input }),
   trashNode: (id: string, revision: number) => apiRequest(`/nodes/${id}/trash`, { method: "POST", headers: { "If-Match": `\"${revision}\"`, "Idempotency-Key": crypto.randomUUID() } }),
   restoreNode: (id: string, revision: number) => apiRequest(`/nodes/${id}/restore`, { method: "POST", headers: { "If-Match": `\"${revision}\"`, "Idempotency-Key": crypto.randomUUID() } }),
   purgeNode: (id: string, revision: number) => apiRequest(`/nodes/${id}/purge`, { method: "POST", headers: { "If-Match": `\"${revision}\"`, "Idempotency-Key": crypto.randomUUID() } }),
