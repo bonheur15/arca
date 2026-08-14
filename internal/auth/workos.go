@@ -50,9 +50,65 @@ func (p *WorkOSProvider) ReconcileUser(ctx context.Context, request accounts.Ide
 		if getErr == nil {
 			return reconcileIdentity(user.ID, user.Email, user.ExternalID, request)
 		}
+		// A pre-existing WorkOS user with the same email can be adopted only
+		// when it has no external identity claim. This supports bootstrap into
+		// a fresh dedicated WorkOS environment without ever stealing a user
+		// already linked to a different Arca UUID.
+		existing, findErr := p.findUserByEmail(ctx, request.Email)
+		if findErr == nil && existing != nil {
+			if existing.ExternalID != nil && *existing.ExternalID != request.ArcaUserID {
+				return accounts.ExternalIdentity{}, errors.New("auth: existing WorkOS user belongs to another external identity")
+			}
+			metadata := make(map[string]string, len(existing.Metadata)+1)
+			for key, value := range existing.Metadata {
+				metadata[key] = value
+			}
+			metadata["arca_user_id"] = request.ArcaUserID
+			updated, updateErr := p.client.UserManagement().Update(ctx, existing.ID, &workos.UserManagementUpdateParams{
+				ExternalID: &request.ArcaUserID,
+				Metadata:   metadata,
+			})
+			if updateErr != nil {
+				return accounts.ExternalIdentity{}, fmt.Errorf("auth: link existing WorkOS user: %w", updateErr)
+			}
+			return reconcileIdentity(updated.ID, updated.Email, updated.ExternalID, request)
+		}
 		return accounts.ExternalIdentity{}, fmt.Errorf("auth: create WorkOS user: %w", createErr)
 	}
 	return reconcileIdentity(response.ID, response.Email, response.ExternalID, request)
+}
+
+func (p *WorkOSProvider) findUserByEmail(ctx context.Context, email string) (*workos.User, error) {
+	limit := 10
+	iterator := p.client.UserManagement().List(ctx, &workos.UserManagementListParams{
+		PaginationParams: workos.PaginationParams{Limit: &limit}, Email: &email,
+	})
+	_, expectedKey, err := accounts.NormalizeEmail(email)
+	if err != nil {
+		return nil, err
+	}
+	var match *workos.User
+	for iterator.Next() {
+		candidate := iterator.Current()
+		if candidate == nil {
+			continue
+		}
+		_, candidateKey, normalizeErr := accounts.NormalizeEmail(candidate.Email)
+		if normalizeErr == nil && candidateKey == expectedKey {
+			if match != nil && match.ID != candidate.ID {
+				return nil, errors.New("auth: multiple WorkOS users matched the same email")
+			}
+			copy := *candidate
+			match = &copy
+		}
+	}
+	if err := iterator.Err(); err != nil {
+		return nil, fmt.Errorf("auth: list WorkOS users by email: %w", err)
+	}
+	if match == nil {
+		return nil, accounts.ErrNotFound
+	}
+	return match, nil
 }
 
 func reconcileIdentity(id, email string, externalID *string, request accounts.IdentityRequest) (accounts.ExternalIdentity, error) {
@@ -154,7 +210,7 @@ func (p *WorkOSProvider) InspectSession(sealed, password string) (SessionInspect
 func (p *WorkOSProvider) RefreshSession(ctx context.Context, sealed, password string) (SessionRefresh, error) {
 	result, err := p.client.RefreshSession(ctx, sealed, password)
 	if err != nil {
-		terminal := result != nil && result.Reason == "refresh_token_revoked"
+		terminal := result != nil && terminalRefreshReason(result.Reason)
 		reason := "refresh_failed"
 		if result != nil && result.Reason != "" {
 			reason = result.Reason
@@ -166,7 +222,7 @@ func (p *WorkOSProvider) RefreshSession(ctx context.Context, sealed, password st
 		if result != nil && result.Reason != "" {
 			reason = result.Reason
 		}
-		return SessionRefresh{Terminal: reason == "refresh_token_revoked", Reason: reason}, nil
+		return SessionRefresh{Terminal: terminalRefreshReason(reason), Reason: reason}, nil
 	}
 	inspection, inspectErr := p.InspectSession(result.SealedSession, password)
 	if inspectErr != nil {
@@ -177,6 +233,15 @@ func (p *WorkOSProvider) RefreshSession(ctx context.Context, sealed, password st
 		WorkOSUserID: inspection.WorkOSUserID, SessionID: inspection.SessionID,
 		Reason: inspection.Reason,
 	}, nil
+}
+
+func terminalRefreshReason(reason string) bool {
+	switch reason {
+	case "refresh_token_revoked", "no_session_cookie_provided", "invalid_session_cookie", "no_refresh_token":
+		return true
+	default:
+		return false
+	}
 }
 
 func (p *WorkOSProvider) RevokeSession(ctx context.Context, sessionID string) error {
