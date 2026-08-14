@@ -99,6 +99,7 @@ func (s *Server) routes() chi.Router {
 		api.Get("/access-requests/status", s.accessRequestStatus)
 		api.With(s.publicExchangeLimits).Post("/public/exchange", s.publicExchange)
 		api.Get("/public/bundle", s.publicBundle)
+		api.Get("/public/archive", s.publicArchive)
 		api.Get("/public/files/{nodeID}/content", s.publicContent)
 		api.Get("/session", s.session)
 
