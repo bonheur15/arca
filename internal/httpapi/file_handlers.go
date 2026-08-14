@@ -10,6 +10,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"os"
 	"path"
 	"strconv"
 	"strings"
@@ -154,6 +155,9 @@ func (s *Server) auditSupportRead(r *http.Request, nodeID, action string) error 
 	}
 	if !access.Support {
 		return nil
+	}
+	if !p.Superadmin() {
+		return accounts.ErrForbidden
 	}
 	grant, err := s.runtime.AccountRepo.GetActiveSupportAccess(r.Context(), p.UserID)
 	if err != nil {
@@ -1265,7 +1269,7 @@ func (s *Server) archiveNodes(w http.ResponseWriter, r *http.Request) {
 		header := &zip.FileHeader{Name: entry.ArchivePath, Method: zip.Store, Modified: entry.Node.UpdatedAt.UTC()}
 		if entry.Node.Kind == files.KindFolder {
 			header.Name = strings.TrimSuffix(header.Name, "/") + "/"
-			header.SetMode(0o755 | 0o040000)
+			header.SetMode(os.ModeDir | 0o755)
 			if _, err := zw.CreateHeader(header); err != nil {
 				s.logger.Error("archive folder header failed", "request_id", RequestID(r.Context()), "node_id", entry.Node.ID, "error", err)
 				return
@@ -1289,7 +1293,7 @@ func (s *Server) archiveNodes(w http.ResponseWriter, r *http.Request) {
 			s.logger.Error("archive file header failed", "request_id", RequestID(r.Context()), "node_id", entry.Node.ID, "error", err)
 			return
 		}
-		copied, copyErr := io.CopyBuffer(writer, io.LimitReader(reader, resolved.Version.SizeBytes+1), buffer)
+		copied, copyErr := io.CopyBuffer(writer, io.LimitReader(reader, resolved.Version.SizeBytes), buffer)
 		closeErr := reader.Close()
 		if copyErr != nil || closeErr != nil || copied != resolved.Version.SizeBytes {
 			s.logger.Error("archive file stream failed", "request_id", RequestID(r.Context()), "node_id", entry.Node.ID,
@@ -1402,7 +1406,7 @@ func collectArchiveTree(ctx context.Context, q database.Queryer, rootID string) 
 func safeArchiveSegment(value string) string {
 	value = strings.TrimSpace(value)
 	value = strings.Map(func(r rune) rune {
-		if r == '/' || r == '\\' || r == 0 || unicode.IsControl(r) {
+		if r == '/' || r == '\\' || r == 0 || unicode.IsControl(r) || strings.ContainsRune(`<>:"|?*`, r) {
 			return '_'
 		}
 		return r
@@ -1410,6 +1414,11 @@ func safeArchiveSegment(value string) string {
 	value = strings.Trim(value, " .")
 	if value == "" || value == "." || value == ".." {
 		return "item"
+	}
+	base := strings.ToUpper(strings.TrimSuffix(value, path.Ext(value)))
+	if base == "CON" || base == "PRN" || base == "AUX" || base == "NUL" ||
+		(len(base) == 4 && (strings.HasPrefix(base, "COM") || strings.HasPrefix(base, "LPT")) && base[3] >= '1' && base[3] <= '9') {
+		value = "_" + value
 	}
 	return value
 }
