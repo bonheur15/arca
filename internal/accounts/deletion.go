@@ -186,6 +186,15 @@ func (p *DeletionProcessor) Process(ctx context.Context, userID string) error {
 			return err
 		}
 	}
+	if deletion.State == "completed" && deletion.LocalAuditPending {
+		if err := p.record(ctx, deletion, "user.deletion_local_completed"); err != nil {
+			return err
+		}
+		if err := p.repository.markDeletionAudited(ctx, userID, false); err != nil {
+			return err
+		}
+		deletion.LocalAuditPending = false
+	}
 	if deletion.FinalAuditPending {
 		if err := p.record(ctx, deletion, "user.deleted"); err != nil {
 			return err
@@ -621,14 +630,14 @@ func (r *Repository) completeIdentityDeletion(ctx context.Context, userID string
 
 func (r *Repository) markDeletionAudited(ctx context.Context, userID string, final bool) error {
 	column := "local_audited_at"
-	state := "local_complete"
+	states := "('local_complete', 'completed')"
 	if final {
 		column = "completed_audited_at"
-		state = "completed"
+		states = "('completed')"
 	}
 	stamp := formatTime(r.now().UTC())
 	result, err := r.db.ExecContext(ctx, `UPDATE account_deletions SET `+column+` = COALESCE(`+column+`, ?), updated_at = ?
-		WHERE user_id = ? AND state = ?`, stamp, stamp, userID, state)
+		WHERE user_id = ? AND state IN `+states, stamp, stamp, userID)
 	if err != nil {
 		return err
 	}
@@ -681,7 +690,7 @@ func scanDeletion(row interface{ Scan(...any) error }) (Deletion, error) {
 		}
 		deletion.WorkOSCompletedAt = &value
 	}
-	deletion.LocalAuditPending = deletion.State == "local_complete" && !localAudited.Valid
+	deletion.LocalAuditPending = (deletion.State == "local_complete" || deletion.State == "completed") && !localAudited.Valid
 	deletion.FinalAuditPending = deletion.State == "completed" && !completedAudited.Valid
 	return deletion, nil
 }
