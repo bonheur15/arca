@@ -405,6 +405,14 @@ paths:
       security: []
       operationId: getPublicBundle
       responses: {'200': {$ref: '#/components/responses/List'}, default: {$ref: '#/components/responses/Problem'}}
+  /public/archive:
+    get:
+      tags: [Sharing]
+      security: []
+      operationId: downloadPublicArchive
+      responses:
+        '200': {description: Streamed ZIP64 public bundle, content: {application/zip: {schema: {type: string, format: binary}}}}
+        default: {$ref: '#/components/responses/Problem'}
   /public/files/{nodeId}/content:
     get:
       tags: [Sharing]
