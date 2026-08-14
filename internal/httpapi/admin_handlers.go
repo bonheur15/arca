@@ -413,12 +413,17 @@ func csvSafe(value string) string {
 
 func (s *Server) adminSettings(w http.ResponseWriter, r *http.Request) {
 	var allow bool
-	var trustedJSON string
-	_ = s.runtime.Database.Reader().QueryRowContext(r.Context(), `SELECT allow_access_requests, trusted_proxy_cidrs FROM instance_settings WHERE singleton = 1`).Scan(&allow, &trustedJSON)
+	var trustedJSON, originsJSON string
+	if err := s.runtime.Database.Reader().QueryRowContext(r.Context(), `SELECT allow_access_requests, trusted_proxy_cidrs, allowed_cors_origins FROM instance_settings WHERE singleton = 1`).Scan(&allow, &trustedJSON, &originsJSON); err != nil {
+		s.handleError(w, r, err)
+		return
+	}
 	var trusted []string
 	_ = json.Unmarshal([]byte(trustedJSON), &trusted)
+	var origins []string
+	_ = json.Unmarshal([]byte(originsJSON), &origins)
 	WriteJSON(w, http.StatusOK, map[string]any{"instanceName": s.runtime.Config.File.InstanceName, "publicUrl": s.runtime.Config.File.PublicURL,
-		"allowAccessRequests": allow, "filesystemReserveBytes": s.runtime.Config.File.FilesystemReserveBytes, "trustedProxyCidrs": trusted})
+		"allowAccessRequests": allow, "filesystemReserveBytes": s.runtime.Config.File.FilesystemReserveBytes, "trustedProxyCidrs": trusted, "allowedCorsOrigins": origins})
 }
 
 func (s *Server) adminSaveSettings(w http.ResponseWriter, r *http.Request) {
@@ -428,6 +433,7 @@ func (s *Server) adminSaveSettings(w http.ResponseWriter, r *http.Request) {
 		AllowAccessRequests    bool     `json:"allowAccessRequests"`
 		FilesystemReserveBytes int64    `json:"filesystemReserveBytes"`
 		TrustedProxyCIDRs      []string `json:"trustedProxyCidrs"`
+		AllowedCORSOrigins     []string `json:"allowedCorsOrigins"`
 	}
 	if err := decodeBody(w, r, &body); err != nil {
 		WriteProblem(w, r, http.StatusBadRequest, "invalid_request", "Invalid request", err.Error())
@@ -446,9 +452,14 @@ func (s *Server) adminSaveSettings(w http.ResponseWriter, r *http.Request) {
 		WriteProblem(w, r, http.StatusBadRequest, "invalid_proxy_cidrs", "Invalid trusted proxies", err.Error())
 		return
 	}
+	if _, err := ParseOrigins(body.AllowedCORSOrigins); err != nil {
+		WriteProblem(w, r, http.StatusBadRequest, "invalid_cors_origins", "Invalid CORS origins", err.Error())
+		return
+	}
 	trusted, _ := json.Marshal(body.TrustedProxyCIDRs)
+	origins, _ := json.Marshal(body.AllowedCORSOrigins)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	_, err = s.runtime.Database.Writer().ExecContext(r.Context(), `UPDATE instance_settings SET name=?, public_url=?, filesystem_reserve_bytes=?, allow_access_requests=?, trusted_proxy_cidrs=?, updated_at=? WHERE singleton=1`, body.InstanceName, body.PublicURL, body.FilesystemReserveBytes, body.AllowAccessRequests, string(trusted), now)
+	_, err = s.runtime.Database.Writer().ExecContext(r.Context(), `UPDATE instance_settings SET name=?, public_url=?, filesystem_reserve_bytes=?, allow_access_requests=?, trusted_proxy_cidrs=?, allowed_cors_origins=?, updated_at=? WHERE singleton=1`, body.InstanceName, body.PublicURL, body.FilesystemReserveBytes, body.AllowAccessRequests, string(trusted), string(origins), now)
 	if err != nil {
 		s.handleError(w, r, err)
 		return
@@ -457,6 +468,7 @@ func (s *Server) adminSaveSettings(w http.ResponseWriter, r *http.Request) {
 	s.runtime.Config.File.PublicURL = body.PublicURL
 	s.runtime.Config.File.FilesystemReserveBytes = body.FilesystemReserveBytes
 	s.runtime.Config.File.TrustedProxyCIDRs = body.TrustedProxyCIDRs
+	s.runtime.Config.File.AllowedCORSOrigins = body.AllowedCORSOrigins
 	if err := s.runtime.Config.Save(); err != nil {
 		s.handleError(w, r, err)
 		return
