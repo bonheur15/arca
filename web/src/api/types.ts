@@ -9,7 +9,7 @@ export type AccountState =
 
 export type ThemeMode = "system" | "light" | "dark";
 export type Density = "comfortable" | "compact";
-export type Accent = "violet" | "indigo" | "blue" | "teal" | "green" | "amber" | "orange" | "rose";
+export type Accent = "violet" | "indigo" | "blue" | "cyan" | "teal" | "green" | "amber" | "rose";
 
 export interface QuotaSummary {
   usedBytes: number;
@@ -139,7 +139,7 @@ export interface UploadItem {
   offset: number;
   progress: number;
   state: UploadState;
-  error?: string;
+  error?: string | undefined;
 }
 
 export type SharePermission = "viewer" | "editor";
