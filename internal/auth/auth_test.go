@@ -187,6 +187,38 @@ func TestEventReconcilerUpdatesIdentityRevokesSessionAndSuspends(t *testing.T) {
 	}
 }
 
+func TestRevokeSessionVerifiesOwnership(t *testing.T) {
+	db := openAuthTestDB(t)
+	repository := accounts.NewRepository(db.Writer())
+	user, err := repository.CreateUser(context.Background(), accounts.CreateUserParams{
+		Username: "alice", Email: "alice@example.com", Role: accounts.RoleMember,
+		State: accounts.StateProvisioning, QuotaBytes: 1_000, Policy: accounts.DefaultPolicy(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.CompleteProvisioning(context.Background(), user.ID, "workos_alice"); err != nil {
+		t.Fatal(err)
+	}
+	secret := randomSecret(t)
+	challenges, _ := NewChallengeStore(db.Writer(), secret)
+	provider := &fakeProvider{sessions: []RemoteSession{{ID: "own_session", UserID: "workos_alice", ExpiresAt: time.Now().Add(time.Hour)}}}
+	service, _ := NewService(repository, challenges, provider, db.Writer(), "cookie-password", secret, audit.NopRecorder{})
+	mutation := accounts.MutationContext{ActorID: user.ID}
+	if err := service.RevokeSession(context.Background(), "other_session", user.ID, time.Now().Add(time.Minute), mutation); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("foreign session revocation error = %v", err)
+	}
+	if len(provider.revoked) != 0 {
+		t.Fatalf("foreign session reached provider: %#v", provider.revoked)
+	}
+	if err := service.RevokeSession(context.Background(), "own_session", user.ID, time.Now().Add(time.Minute), mutation); err != nil {
+		t.Fatal(err)
+	}
+	if len(provider.revoked) != 1 || provider.revoked[0] != "own_session" {
+		t.Fatalf("revoked sessions = %#v", provider.revoked)
+	}
+}
+
 func TestMemoryLimiter(t *testing.T) {
 	limiter := NewMemoryLimiter()
 	now := time.Date(2026, time.August, 14, 0, 0, 0, 0, time.UTC)
@@ -215,6 +247,11 @@ type fakeProvider struct {
 	workosUserID string
 	email        string
 	revoked      []string
+	sessions     []RemoteSession
+}
+
+func (f *fakeProvider) ListSessions(_ context.Context, _ string, _ int) ([]RemoteSession, error) {
+	return f.sessions, nil
 }
 
 type fakeEventSource struct {
