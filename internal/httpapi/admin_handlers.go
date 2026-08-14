@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"arca/internal/accounts"
-	"arca/internal/audit"
 	"arca/internal/auth"
 	"arca/internal/config"
 
@@ -484,8 +483,10 @@ func (s *Server) adminSaveSettings(w http.ResponseWriter, r *http.Request) {
 		s.handleError(w, r, err)
 		return
 	}
-	p := principal(r)
-	_ = s.runtime.Audit.Record(r.Context(), audit.Event{ActorID: &p.UserID, Action: "instance.settings_changed", TargetType: "instance", TargetID: "1", IPAddress: s.remoteIP(r), UserAgent: r.UserAgent(), RequestID: RequestID(r.Context())})
+	if err := s.recordRequestAudit(r, "instance.settings_changed", "instance", "1", map[string]any{"restart_required": true}); err != nil {
+		s.handleError(w, r, err)
+		return
+	}
 	WriteJSON(w, http.StatusOK, map[string]any{"saved": true, "restart_required": true})
 }
 
