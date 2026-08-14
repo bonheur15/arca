@@ -176,6 +176,7 @@ export function parseUser(value: unknown): User {
     createdAt: stringAt(record, new Date(0).toISOString(), "createdAt", "created_at"),
     updatedAt: stringAt(record, new Date(0).toISOString(), "updatedAt", "updated_at"),
     lastSignInAt: nullableStringAt(record, "lastSignInAt", "last_sign_in_at"),
+    deletionDueAt: nullableStringAt(record, "deletionDueAt", "deletion_due_at"),
   };
 }
 
