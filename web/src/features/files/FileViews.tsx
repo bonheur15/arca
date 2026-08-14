@@ -155,6 +155,7 @@ function FileList({
       <AnimatePresence initial={false}>
         {nodes.map((node) => {
           const checked = selected.has(node.id);
+          let holdTimer: number | undefined;
           return (
             <motion.div
               animate={{ opacity: 1, y: 0 }}
@@ -164,6 +165,9 @@ function FileList({
               key={node.id}
               layout
               onDoubleClick={() => onPreview(node)}
+              onPointerCancel={() => window.clearTimeout(holdTimer)}
+              onPointerDown={(event) => { if (event.pointerType === "touch") holdTimer = window.setTimeout(() => onSelect(node.id, true), 480); }}
+              onPointerUp={() => window.clearTimeout(holdTimer)}
               role="row"
             >
               <label className="check"><input aria-label={`Select ${node.name}`} checked={checked} onChange={(event) => onSelect(node.id, event.target.checked)} type="checkbox" /><span><Check size={12} /></span></label>
@@ -180,13 +184,14 @@ function FileList({
   );
 }
 
-function FileGrid({ nodes, collection, selected, onSelect, onPreview, onDetails, onRename, onShare, onTrash, onRestore, onPurge }: Parameters<typeof FileList>[0]) {
+function FileGrid({ nodes, collection, selected, onSelect, onPreview, onDetails, onRename, onMove, onCopy, onShare, onTrash, onRestore, onPurge }: Parameters<typeof FileList>[0]) {
   return (
     <div className="file-grid" role="grid" aria-label="Files and folders">
       {nodes.map((node) => {
         const checked = selected.has(node.id);
+        let holdTimer: number | undefined;
         return (
-          <motion.article className={`file-card ${checked ? "file-card--selected" : ""}`} initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} key={node.id} onDoubleClick={() => onPreview(node)} role="gridcell">
+          <motion.article className={`file-card ${checked ? "file-card--selected" : ""}`} initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} key={node.id} onDoubleClick={() => onPreview(node)} onPointerCancel={() => window.clearTimeout(holdTimer)} onPointerDown={(event) => { if (event.pointerType === "touch") holdTimer = window.setTimeout(() => onSelect(node.id, true), 480); }} onPointerUp={() => window.clearTimeout(holdTimer)} role="gridcell">
             <div className="file-card__top"><label className="check"><input aria-label={`Select ${node.name}`} checked={checked} onChange={(event) => onSelect(node.id, event.target.checked)} type="checkbox" /><span><Check size={12} /></span></label><NodeMenu collection={collection} node={node} onCopy={() => onCopy(node)} onDetails={() => onDetails(node)} onMove={() => onMove(node)} onPreview={() => onPreview(node)} onPurge={() => onPurge(node)} onRename={() => onRename(node)} onRestore={() => onRestore(node)} onShare={() => onShare(node)} onTrash={() => onTrash(node)} /></div>
             <button className="file-card__preview" onClick={() => onPreview(node)} type="button"><span className="file-card__arch"><FileIcon node={node} size={36} /></span></button>
             <div className="file-card__copy"><NodeName node={node} onPreview={() => onPreview(node)} /><span>{node.kind === "folder" ? formatRelativeDate(node.updatedAt) : `${formatBytes(node.sizeBytes)} · ${formatRelativeDate(node.updatedAt)}`}</span></div>
@@ -349,6 +354,28 @@ function Breadcrumbs({ page, collection }: { page: NodePage; collection: Collect
   return <nav aria-label="Breadcrumb" className="breadcrumbs">{crumbs.map((crumb, index) => <span key={crumb.id ?? "root"}>{index ? <ChevronRight size={14} /> : null}{index === crumbs.length - 1 ? <strong>{crumb.name}</strong> : crumb.id ? <Link to="/files/$folderId" params={{ folderId: crumb.id }}>{crumb.name}</Link> : <Link to="/files">{crumb.name}</Link>}</span>)}</nav>;
 }
 
+function ManagedShares() {
+  const queryClient = useQueryClient();
+  const session = useQuery({ queryKey: ["session"], queryFn: api.session });
+  const shares = useQuery({ queryKey: ["shares"], queryFn: api.shares });
+  const publicShares = useQuery({ queryKey: ["public-shares"], queryFn: api.publicShares });
+  const revokeInternal = useMutation({ mutationFn: api.revokeShare, onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["shares"] }) });
+  const revokePublic = useMutation({ mutationFn: api.revokePublicShare, onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["public-shares"] }) });
+  const owned = shares.data?.filter((share) => share.ownerId === session.data?.user?.id) ?? [];
+  const temporary = publicShares.data ?? [];
+  if (shares.isPending || publicShares.isPending) return <section className="managed-shares"><div className="managed-shares__head"><h2>Shares you manage</h2></div><LoadingState compact label="Loading active shares…" /></section>;
+  if (!owned.length && !temporary.length) return null;
+  return (
+    <section className="managed-shares">
+      <div className="managed-shares__head"><div><h2>Shares you manage</h2><p>Revoke access immediately or check temporary-code usage.</p></div></div>
+      <div className="managed-share-list">
+        {owned.map((share) => <div className="managed-share" key={share.id}><span className="managed-share__icon"><Users size={17} /></span><div><strong>{share.roots.map((node) => node.name).join(", ") || "Shared bundle"}</strong><span>{share.permission} · {share.recipients.map((recipient) => recipient.displayName || recipient.username).join(", ")}</span></div><StatusPill tone="accent">Internal</StatusPill><Button disabled={revokeInternal.isPending} onClick={() => revokeInternal.mutate(share.id)} variant="ghost">Revoke</Button></div>)}
+        {temporary.map((share) => <div className="managed-share" key={share.id}><span className="managed-share__icon"><LockKeyhole size={17} /></span><div><strong>{share.roots.map((node) => node.name).join(", ") || "Public bundle"}</strong><span>{share.redemptionCount} of {share.redemptionLimit} opens · expires {formatRelativeDate(share.expiresAt)}</span></div><StatusPill tone={share.state === "active" ? "warning" : "neutral"}>{share.state}</StatusPill>{share.state === "active" ? <Button disabled={revokePublic.isPending} onClick={() => revokePublic.mutate(share.id)} variant="ghost">Revoke</Button> : <span />}</div>)}
+      </div>
+    </section>
+  );
+}
+
 export function FileBrowser({ collection, folderId = null, query = "" }: { collection: Collection; folderId?: string | null; query?: string }) {
   const navigate = useNavigate();
   const routerSearch = useRouterState({ select: (state) => state.location.search as Record<string, unknown> });
@@ -445,6 +472,7 @@ export function FileBrowser({ collection, folderId = null, query = "" }: { colle
         ) : (
           <FileList collection={collection} nodes={nodes} onCopy={(node) => setDestination({ node, mode: "copy" })} onDetails={setDetails} onMove={(node) => setDestination({ node, mode: "move" })} onPreview={openNode} onPurge={(node) => setConfirm({ node, action: "purge" })} onRename={setRenaming} onRestore={(node) => action.mutate({ node, kind: "restore" })} onSelect={toggleSelect} onShare={(node) => setSharing([node])} onTrash={(node) => setConfirm({ node, action: "trash" })} selected={selected} />
         )}
+        {collection === "shared" ? <ManagedShares /> : null}
       </section>
       <DetailsPanel node={details} onClose={() => setDetails(null)} />
       <PreviewDialog node={preview} onClose={() => setPreview(null)} />
