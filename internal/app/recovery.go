@@ -40,7 +40,9 @@ func (r *Runtime) CreateRecoveryCode(ctx context.Context) (string, time.Time, er
 	if _, err := r.Database.Writer().ExecContext(ctx, `INSERT INTO admin_recovery_codes(id, code_hash, expires_at, created_at) VALUES(?,?,?,?)`, id.String(), hash, expires.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
 		return "", time.Time{}, err
 	}
-	_ = r.Audit.Record(ctx, audit.Event{Action: "recovery.code_generated", TargetType: "recovery_code", TargetID: id.String()})
+	if err := r.Audit.Record(ctx, audit.Event{Action: "recovery.code_generated", TargetType: "recovery_code", TargetID: id.String()}); err != nil {
+		return "", time.Time{}, fmt.Errorf("recovery code created but audit failed: %w", err)
+	}
 	return code, expires, nil
 }
 
@@ -73,7 +75,9 @@ func (r *Runtime) AddRecoverySuperadmin(ctx context.Context, code, username, ema
 		if promoteErr != nil {
 			return nil, promoteErr
 		}
-		_ = r.Audit.Record(ctx, audit.Event{Action: "recovery.superadmin_promoted", TargetType: "user", TargetID: promoted.ID})
+		if err := r.Audit.Record(ctx, audit.Event{Action: "recovery.superadmin_promoted", TargetType: "user", TargetID: promoted.ID}); err != nil {
+			return promoted, fmt.Errorf("superadmin promoted but audit failed: %w", err)
+		}
 		return promoted, nil
 	} else if !errors.Is(lookupErr, accounts.ErrNotFound) {
 		return nil, lookupErr
@@ -86,7 +90,9 @@ func (r *Runtime) AddRecoverySuperadmin(ctx context.Context, code, username, ema
 	if err != nil {
 		return created, fmt.Errorf("recovery superadmin remains provisioning: %w", err)
 	}
-	_ = r.Audit.Record(ctx, audit.Event{Action: "recovery.superadmin_created", TargetType: "user", TargetID: created.ID})
+	if err := r.Audit.Record(ctx, audit.Event{Action: "recovery.superadmin_created", TargetType: "user", TargetID: created.ID}); err != nil {
+		return created, fmt.Errorf("superadmin created but audit failed: %w", err)
+	}
 	return created, nil
 }
 
