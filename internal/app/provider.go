@@ -94,6 +94,18 @@ func (p *DynamicProvider) RevokeSession(ctx context.Context, sessionID string) e
 	return delegate.RevokeSession(ctx, sessionID)
 }
 
+func (p *DynamicProvider) DeleteUser(ctx context.Context, workOSUserID string) error {
+	delegate, err := p.get()
+	if err != nil {
+		return err
+	}
+	deletion, ok := delegate.(accounts.IdentityDeletionProvider)
+	if !ok {
+		return errors.New("configured identity provider does not support user deletion")
+	}
+	return deletion.DeleteUser(ctx, workOSUserID)
+}
+
 func (p *DynamicProvider) ListSessions(ctx context.Context, workOSUserID string, limit int) ([]auth.RemoteSession, error) {
 	delegate, err := p.get()
 	if err != nil {
