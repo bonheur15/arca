@@ -532,18 +532,37 @@ func revokeAccountAccessTx(ctx context.Context, tx *sql.Tx, userID, now string) 
 // RestoreUser returns a suspended or deletion-pending account to active use,
 // choosing over_quota when its durable plus reserved bytes exceed its quota.
 func (r *Repository) RestoreUser(ctx context.Context, userID string) (*User, error) {
-	result, err := r.db.ExecContext(ctx, `
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("accounts: begin user restore: %w", err)
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `
 		UPDATE users SET
 			state = CASE WHEN quota_unlimited = 0 AND used_bytes + reserved_bytes > quota_bytes
 				THEN 'over_quota' ELSE 'active' END,
 			deletion_due_at = NULL, updated_at = ?
-		WHERE id = ? AND state IN ('suspended', 'deletion_pending')`,
-		formatTime(r.now().UTC()), userID)
+		WHERE id = ? AND (state = 'suspended' OR (state = 'deletion_pending' AND deletion_due_at > ?))`,
+		formatTime(r.now().UTC()), userID, formatTime(r.now().UTC()))
 	if err != nil {
 		return nil, fmt.Errorf("accounts: restore user: %w", err)
 	}
 	if changed, _ := result.RowsAffected(); changed == 0 {
 		return nil, ErrInvalidTransition
+	}
+	stamp := formatTime(r.now().UTC())
+	if _, err := tx.ExecContext(ctx, `UPDATE jobs SET state = 'completed', lease_until = NULL,
+		last_error = 'cancelled by account restore', updated_at = ? WHERE id IN
+		(SELECT job_id FROM account_deletions WHERE user_id = ? AND state = 'scheduled')
+		AND state IN ('queued', 'running')`, stamp, userID); err != nil {
+		return nil, fmt.Errorf("accounts: cancel deletion job: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE account_deletions SET state = 'cancelled', updated_at = ?
+		WHERE user_id = ? AND state = 'scheduled'`, stamp, userID); err != nil {
+		return nil, fmt.Errorf("accounts: cancel deletion plan: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("accounts: commit user restore: %w", err)
 	}
 	return r.GetUserByID(ctx, userID)
 }
