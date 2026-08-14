@@ -25,10 +25,9 @@ const (
 
 // Config controls how an Arca SQLite database is opened.
 type Config struct {
-	Path            string
-	Migrations      fs.FS
-	MaxReadConns    int
-	SkipVersionGate bool // Intended only for tests with a deliberately old SQLite build.
+	Path         string
+	Migrations   fs.FS
+	MaxReadConns int
 }
 
 // DB separates the single serialized writer from a bounded read pool.
@@ -56,6 +55,13 @@ func Open(ctx context.Context, cfg Config) (*DB, error) {
 	if err := os.Chmod(filepath.Dir(abs), 0o700); err != nil {
 		return nil, fmt.Errorf("secure database directory: %w", err)
 	}
+	if info, err := os.Lstat(abs); err == nil {
+		if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+			return nil, fmt.Errorf("database path %q must be a regular file", abs)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("inspect database path: %w", err)
+	}
 
 	writer, err := sql.Open("sqlite", sqliteDSN(abs, false))
 	if err != nil {
@@ -77,10 +83,8 @@ func Open(ctx context.Context, cfg Config) (*DB, error) {
 	if err := writer.QueryRowContext(ctx, "SELECT sqlite_version()").Scan(&version); err != nil {
 		return nil, fmt.Errorf("read SQLite version: %w", err)
 	}
-	if !cfg.SkipVersionGate {
-		if err := ValidateSQLiteVersion(version); err != nil {
-			return nil, err
-		}
+	if err := ValidateSQLiteVersion(version); err != nil {
+		return nil, err
 	}
 	if err := verifyPragmas(ctx, writer, false); err != nil {
 		return nil, err
