@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 func (s *Service) SetFavorite(ctx context.Context, actorID, nodeID string, favorite bool) error {
@@ -28,6 +26,7 @@ func (s *Service) SetFavorite(ctx context.Context, actorID, nodeID string, favor
 
 func (s *Service) ListFavorites(ctx context.Context, actorID string, options ListOptions) (NodePage, error) {
 	limit := clampLimit(options.Limit)
+	rawLimit := limit * 8
 	offset, err := decodeOffsetCursor(options.Cursor)
 	if err != nil {
 		return NodePage{}, err
@@ -35,7 +34,7 @@ func (s *Service) ListFavorites(ctx context.Context, actorID string, options Lis
 	rows, err := s.db.Reader().QueryContext(ctx, nodeSelect+`
         JOIN favorites mine ON mine.node_id = n.id AND mine.user_id = ?
         WHERE n.trashed_at IS NULL ORDER BY mine.created_at DESC, n.id LIMIT ? OFFSET ?`,
-		actorID, actorID, limit*4+1, offset)
+		actorID, actorID, rawLimit+1, offset)
 	if err != nil {
 		return NodePage{}, WrapError(CodeInvalid, "list favorites", actorID, err)
 	}
@@ -55,7 +54,12 @@ func (s *Service) ListFavorites(ctx context.Context, actorID string, options Lis
 		return NodePage{}, err
 	}
 	var items []Node
-	for _, node := range candidates {
+	consumed := 0
+	for index, node := range candidates {
+		if index >= rawLimit || len(items) >= limit {
+			break
+		}
+		consumed++
 		access, err := Authorize(ctx, s.db.Reader(), actorID, node.ID, ActionRead, s.now())
 		if err != nil {
 			if ErrorCodeOf(err) == CodeForbidden || ErrorCodeOf(err) == CodeNotFound {
@@ -65,14 +69,10 @@ func (s *Service) ListFavorites(ctx context.Context, actorID string, options Lis
 		}
 		node.Capabilities = CapabilitiesFor(access, node.ParentID == nil)
 		items = append(items, node)
-		if len(items) > limit {
-			break
-		}
 	}
 	page := NodePage{Items: items}
-	if len(items) > limit {
-		page.Items = items[:limit]
-		page.NextCursor = encodeOffsetCursor(offset + limit)
+	if consumed < len(candidates) || len(candidates) > rawLimit {
+		page.NextCursor = encodeOffsetCursor(offset + consumed)
 	}
 	return page, nil
 }
@@ -83,6 +83,7 @@ func (s *Service) Search(ctx context.Context, actorID string, options SearchOpti
 		return NodePage{}, NewError(CodeInvalid, "search nodes", "", "query is required")
 	}
 	limit := clampLimit(options.Limit)
+	rawLimit := limit * 8
 	offset, err := decodeOffsetCursor(options.Cursor)
 	if err != nil {
 		return NodePage{}, err
@@ -92,7 +93,7 @@ func (s *Service) Search(ctx context.Context, actorID string, options SearchOpti
         WHERE node_search MATCH ? AND n.trashed_at IS NULL
           AND (? = '' OR n.kind = ?) AND (? = '' OR n.mime_type = ?)
         ORDER BY bm25(node_search), n.name_key, n.id LIMIT ? OFFSET ?`,
-		actorID, query, string(options.Kind), string(options.Kind), options.MIMEType, options.MIMEType, limit*8+1, offset)
+		actorID, query, string(options.Kind), string(options.Kind), options.MIMEType, options.MIMEType, rawLimit+1, offset)
 	if err != nil {
 		return NodePage{}, WrapError(CodeInvalid, "search nodes", actorID, err)
 	}
@@ -112,7 +113,12 @@ func (s *Service) Search(ctx context.Context, actorID string, options SearchOpti
 		return NodePage{}, err
 	}
 	var items []Node
-	for _, node := range candidates {
+	consumed := 0
+	for index, node := range candidates {
+		if index >= rawLimit || len(items) >= limit {
+			break
+		}
+		consumed++
 		access, err := Authorize(ctx, s.db.Reader(), actorID, node.ID, ActionRead, s.now())
 		if err != nil {
 			if ErrorCodeOf(err) == CodeForbidden || ErrorCodeOf(err) == CodeNotFound {
@@ -122,14 +128,10 @@ func (s *Service) Search(ctx context.Context, actorID string, options SearchOpti
 		}
 		node.Capabilities = CapabilitiesFor(access, node.ParentID == nil)
 		items = append(items, node)
-		if len(items) > limit {
-			break
-		}
 	}
 	page := NodePage{Items: items}
-	if len(items) > limit {
-		page.Items = items[:limit]
-		page.NextCursor = encodeOffsetCursor(offset + limit)
+	if consumed < len(candidates) || len(candidates) > rawLimit {
+		page.NextCursor = encodeOffsetCursor(offset + consumed)
 	}
 	return page, nil
 }
@@ -415,14 +417,16 @@ func (s *Service) Purge(ctx context.Context, actorID, nodeID string, expectedRev
 	if _, err := tx.ExecContext(ctx, "DELETE FROM public_shares WHERE NOT EXISTS (SELECT 1 FROM public_share_roots WHERE public_share_id = public_shares.id)"); err != nil {
 		return PurgeResult{}, err
 	}
-	jobID, err := uuid.NewV7()
-	if err != nil {
-		return PurgeResult{}, err
-	}
-	now := timeText(s.now())
-	if _, err := tx.ExecContext(ctx, `INSERT INTO jobs(id, kind, payload, state, run_after, created_at, updated_at)
-        VALUES (?, 'blob_gc', '{}', 'queued', ?, ?, ?)`, jobID.String(), deleteAfter, now, now); err != nil {
-		return PurgeResult{}, err
+	if result.BlobsQueued > 0 {
+		jobID, err := s.newID()
+		if err != nil {
+			return PurgeResult{}, err
+		}
+		now := timeText(s.now())
+		if _, err := tx.ExecContext(ctx, `INSERT INTO jobs(id, kind, payload, state, run_after, created_at, updated_at)
+			VALUES (?, 'blobs.gc', '{}', 'queued', ?, ?, ?)`, jobID, deleteAfter, now, now); err != nil {
+			return PurgeResult{}, err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return PurgeResult{}, err
