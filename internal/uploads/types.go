@@ -44,6 +44,7 @@ type Upload struct {
 	ReservedBytes    int64        `json:"reserved_bytes"`
 	ConflictMode     ConflictMode `json:"conflict_mode"`
 	ReplaceNodeID    *string      `json:"replace_node_id,omitempty"`
+	ReplaceRevision  *int64       `json:"replace_revision,omitempty"`
 	ShareID          *string      `json:"share_id,omitempty"`
 	State            State        `json:"state"`
 	ErrorCode        *string      `json:"error_code,omitempty"`
@@ -57,13 +58,14 @@ type Upload struct {
 }
 
 type CreateRequest struct {
-	ActorID       string
-	ParentID      string
-	Name          string
-	ExpectedBytes int64
-	ConflictMode  ConflictMode
-	ReplaceNodeID string
-	ShareID       string
+	ActorID         string
+	ParentID        string
+	Name            string
+	ExpectedBytes   int64
+	ConflictMode    ConflictMode
+	ReplaceNodeID   string
+	ReplaceRevision int64
+	ShareID         string
 }
 
 type PatchRequest struct {
