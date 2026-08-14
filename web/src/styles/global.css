@@ -462,6 +462,7 @@
   .notice svg { flex: none; margin-block-start: 1px; }
   .notice p { color: inherit; font-size: 11px; }
   .confirm-item { align-items: center; background: var(--surface-soft); border-radius: 9px; display: flex; gap: 10px; padding: 12px; }
+  .save-copy-options { margin-block-end: 16px; }
   .destination-breadcrumbs { align-items: center; display: flex; gap: 3px; margin-block-end: 12px; overflow-x: auto; }
   .destination-breadcrumbs span { align-items: center; display: flex; flex: none; }
   .destination-breadcrumbs button { background: transparent; border: 0; border-radius: 5px; color: var(--ink-soft); font-size: 10px; padding: 4px 6px; }
