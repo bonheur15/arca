@@ -317,6 +317,9 @@ func (s *Service) Reconcile(ctx context.Context) error {
 	if err := s.quarantineUnexpected(ctx); err != nil {
 		errs = append(errs, err)
 	}
+	if err := s.cleanupTerminalStaging(ctx); err != nil {
+		errs = append(errs, err)
+	}
 	return errors.Join(errs...)
 }
 
