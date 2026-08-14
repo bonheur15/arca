@@ -429,8 +429,11 @@ func requireAffected(result sql.Result, op, resource string) error {
 
 func checkItemLimit(ctx context.Context, q database.Queryer, ownerID string, additional int64) error {
 	var count, maximum int64
-	err := q.QueryRowContext(ctx, `SELECT (SELECT COUNT(*) FROM nodes WHERE owner_id = ?), p.max_items
-        FROM user_policies p WHERE p.user_id = ?`, ownerID, ownerID).Scan(&count, &maximum)
+	err := q.QueryRowContext(ctx, `SELECT
+		(SELECT COUNT(*) FROM nodes WHERE owner_id = ? AND parent_id IS NOT NULL) +
+		(SELECT COUNT(*) FROM uploads WHERE owner_id = ? AND replace_node_id IS NULL AND state IN ('pending', 'finalizing')),
+		p.max_items
+		FROM user_policies p WHERE p.user_id = ?`, ownerID, ownerID, ownerID).Scan(&count, &maximum)
 	if errors.Is(err, sql.ErrNoRows) {
 		return NewError(CodeInvalid, "check item limit", ownerID, "user policy is missing")
 	}
