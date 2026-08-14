@@ -17,6 +17,8 @@ import (
 	"sync"
 	"time"
 
+	"arca/internal/audit"
+
 	_ "modernc.org/sqlite"
 )
 
@@ -309,6 +311,11 @@ func Restore(ctx context.Context, source string, destination Layout) (Manifest, 
 		UPDATE workos_event_cursor SET cursor = NULL, last_polled_at = NULL, last_error = NULL WHERE singleton = 1;`); err != nil {
 		_ = restored.Close()
 		return Manifest{}, fmt.Errorf("invalidate restored sessions: %w", err)
+	}
+	if err := audit.NewSQLRecorder(restored).Record(ctx, audit.Event{Action: "restore.completed", TargetType: "instance", TargetID: manifest.InstanceID,
+		Metadata: map[string]any{"schema_version": manifest.SchemaVersion, "blob_count": len(manifest.Blobs), "total_bytes": manifest.TotalBytes}}); err != nil {
+		_ = restored.Close()
+		return Manifest{}, fmt.Errorf("record restore audit: %w", err)
 	}
 	if err := restored.Close(); err != nil {
 		return Manifest{}, err
