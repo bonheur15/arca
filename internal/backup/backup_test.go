@@ -89,7 +89,7 @@ func TestCreateVerifyRestoreRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if manifest.InstanceID == "" || manifest.SchemaVersion != 1 || len(manifest.Blobs) != 1 {
+	if manifest.InstanceID == "" || manifest.SchemaVersion != 2 || len(manifest.Blobs) != 1 {
 		t.Fatalf("unexpected manifest: %+v", manifest)
 	}
 	if _, err := Verify(ctx, backupPath); err != nil {
