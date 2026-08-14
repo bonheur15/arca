@@ -273,4 +273,7 @@ export interface Policy {
   maxPublicTtlMinutes: number;
   maxPublicRedemptions: number;
   blockedExtensions: string[];
+  allowedMimeGroups: string[];
+  uploadRateBytes: number | null;
+  downloadRateBytes: number | null;
 }
