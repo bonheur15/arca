@@ -623,6 +623,13 @@
   .admin-dialog-grid { display: grid; gap: 28px; grid-template-columns: 1fr 1fr; }
   .admin-dialog-grid section { display: flex; flex-direction: column; gap: 14px; }
   .admin-dialog-grid h3 { border-bottom: 1px solid var(--line); padding-block-end: 9px; }
+  .deletion-notice { margin-block-end: 20px; }
+  .deletion-notice > div { display: flex; flex-direction: column; }
+  .deletion-notice strong { font-size: 12px; }
+  .account-danger { align-items: center; border: 1px solid color-mix(in srgb, var(--danger) 34%, var(--line)); border-radius: 10px; display: flex; gap: 18px; justify-content: space-between; margin-block-start: 26px; padding: 15px; }
+  .account-danger h3 { color: var(--danger); margin-block-end: 3px; }
+  .account-danger p { font-size: 11px; max-width: 520px; }
+  .account-danger .button { flex: none; }
   .request-list { display: grid; gap: 13px; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); }
   .request-card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px 14px 7px 7px; padding: 17px; }
   .request-card__top { align-items: center; display: grid; gap: 11px; grid-template-columns: 36px 1fr auto; }
@@ -736,6 +743,8 @@
     .admin-table { overflow-x: auto; }
     .admin-layout:has(.admin-table) { overflow-x: auto; }
     .admin-dialog-grid { grid-template-columns: 1fr; }
+    .account-danger { align-items: stretch; flex-direction: column; }
+    .account-danger .button { align-self: flex-start; }
     .storage-facts { grid-template-columns: repeat(2, 1fr); row-gap: 14px; }
   }
 
