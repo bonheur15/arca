@@ -191,3 +191,35 @@ func TestWorkOSProviderListsBoundedEvents(t *testing.T) {
 		t.Fatalf("events = %#v, cursor = %q", events, cursor)
 	}
 }
+
+func TestWorkOSProviderDeleteUserIsIdempotentOnNotFound(t *testing.T) {
+	var requested []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		requested = append(requested, request.Method+" "+request.URL.Path)
+		if request.Method != http.MethodDelete {
+			http.NotFound(w, request)
+			return
+		}
+		if strings.HasSuffix(request.URL.Path, "/missing") {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"code":"not_found","message":"missing"}`))
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(server.Close)
+	provider, err := NewWorkOSProvider("sk_test", "client_test", workos.WithBaseURL(server.URL), workos.WithMaxRetries(0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := provider.DeleteUser(context.Background(), "user_123"); err != nil {
+		t.Fatal(err)
+	}
+	if err := provider.DeleteUser(context.Background(), "missing"); err != nil {
+		t.Fatalf("not-found retry = %v", err)
+	}
+	if got := strings.Join(requested, ","); got != "DELETE /user_management/users/user_123,DELETE /user_management/users/missing" {
+		t.Fatalf("requests = %q", got)
+	}
+}
