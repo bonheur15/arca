@@ -147,6 +147,11 @@ func (s *Service) CreateInternal(ctx context.Context, input CreateInternalInput)
 		if _, err := tx.ExecContext(ctx, `INSERT INTO share_recipients(share_id, user_id) VALUES (?, ?)`, id, recipientID); err != nil {
 			return InternalShare{}, err
 		}
+		payload := fmt.Sprintf(`{"share_id":%q,"owner_id":%q,"permission":%q}`, id, input.OwnerID, input.Permission)
+		if _, err := tx.ExecContext(ctx, `INSERT INTO notifications(id, user_id, kind, payload, created_at)
+			VALUES (?, ?, 'share.created', ?, ?)`, newID(), recipientID, payload, stamp(now)); err != nil {
+			return InternalShare{}, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return InternalShare{}, err
