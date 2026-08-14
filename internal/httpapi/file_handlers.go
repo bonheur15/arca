@@ -1,22 +1,31 @@
 package httpapi
 
 import (
+	"archive/zip"
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
 	"mime"
 	"net/http"
+	"path"
 	"strconv"
 	"strings"
+	"time"
+	"unicode"
 
+	"arca/internal/accounts"
+	"arca/internal/audit"
 	"arca/internal/auth"
+	"arca/internal/database"
 	"arca/internal/files"
 	"arca/internal/preview"
 	"arca/internal/uploads"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 )
 
 func (s *Server) checkScope(w http.ResponseWriter, r *http.Request, scope string) bool {
@@ -34,6 +43,27 @@ func (s *Server) listNodes(w http.ResponseWriter, r *http.Request) {
 	}
 	p := principal(r)
 	parentID := strings.TrimSpace(r.URL.Query().Get("parent_id"))
+	supportUserID := strings.TrimSpace(r.URL.Query().Get("support_user"))
+	if supportUserID != "" {
+		target, err := s.validateSupportBrowse(r, supportUserID)
+		if err != nil {
+			s.handleError(w, r, err)
+			return
+		}
+		if parentID == "" {
+			parentID = target.RootNodeID
+		} else {
+			parent, getErr := s.runtime.Files.Get(r.Context(), p.UserID, parentID)
+			if getErr != nil {
+				s.handleError(w, r, getErr)
+				return
+			}
+			if parent.OwnerID != supportUserID {
+				s.handleError(w, r, accounts.ErrForbidden)
+				return
+			}
+		}
+	}
 	if parentID == "" {
 		user, err := s.runtime.AccountRepo.GetUserByID(r.Context(), p.UserID)
 		if err != nil {
@@ -44,6 +74,10 @@ func (s *Server) listNodes(w http.ResponseWriter, r *http.Request) {
 	}
 	page, err := s.runtime.Files.List(r.Context(), p.UserID, parentID, files.ListOptions{Limit: queryLimit(r), Cursor: r.URL.Query().Get("cursor")})
 	if err != nil {
+		s.handleError(w, r, err)
+		return
+	}
+	if err := s.auditSupportRead(r, parentID, "support_access.folder_opened"); err != nil {
 		s.handleError(w, r, err)
 		return
 	}
@@ -73,12 +107,86 @@ func (s *Server) breadcrumbs(r *http.Request, actorID, nodeID string) []map[stri
 	return result
 }
 
+func (s *Server) validateSupportBrowse(r *http.Request, targetUserID string) (*accounts.User, error) {
+	p := principal(r)
+	if !p.Superadmin() {
+		return nil, accounts.ErrForbidden
+	}
+	access, err := s.runtime.AccountRepo.GetActiveSupportAccess(r.Context(), p.UserID)
+	if err != nil {
+		if errors.Is(err, accounts.ErrNotFound) {
+			return nil, accounts.ErrForbidden
+		}
+		return nil, err
+	}
+	if access.TargetUserID != targetUserID {
+		return nil, accounts.ErrForbidden
+	}
+	target, err := s.runtime.AccountRepo.GetUserByID(r.Context(), targetUserID)
+	if err != nil {
+		return nil, err
+	}
+	if target.RootNodeID == "" {
+		return nil, accounts.ErrNotFound
+	}
+	return target, nil
+}
+
+func (s *Server) validateSupportNodeQuery(r *http.Request, node files.Node) error {
+	targetUserID := strings.TrimSpace(r.URL.Query().Get("support_user"))
+	if targetUserID == "" {
+		return nil
+	}
+	if _, err := s.validateSupportBrowse(r, targetUserID); err != nil {
+		return err
+	}
+	if node.OwnerID != targetUserID {
+		return accounts.ErrForbidden
+	}
+	return nil
+}
+
+func (s *Server) auditSupportRead(r *http.Request, nodeID, action string) error {
+	p := principal(r)
+	access, err := files.Authorize(r.Context(), s.runtime.Database.Reader(), p.UserID, nodeID, files.ActionRead, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	if !access.Support {
+		return nil
+	}
+	grant, err := s.runtime.AccountRepo.GetActiveSupportAccess(r.Context(), p.UserID)
+	if err != nil {
+		return err
+	}
+	if grant.TargetUserID != access.OwnerID {
+		return accounts.ErrForbidden
+	}
+	if s.runtime.Audit == nil {
+		return errors.New("support access audit recorder is unavailable")
+	}
+	actorID := p.UserID
+	return s.runtime.Audit.Record(r.Context(), audit.Event{
+		ActorID: &actorID, Action: action, TargetType: "node", TargetID: nodeID,
+		IPAddress: s.remoteIP(r), UserAgent: r.UserAgent(), RequestID: RequestID(r.Context()),
+		Metadata: map[string]any{"support_access_id": grant.ID, "target_user_id": grant.TargetUserID},
+	})
+}
+
 func (s *Server) getNode(w http.ResponseWriter, r *http.Request) {
 	if !s.checkScope(w, r, string(auth.ScopeFilesRead)) {
 		return
 	}
 	node, err := s.runtime.Files.Get(r.Context(), principal(r).UserID, chi.URLParam(r, "nodeID"))
 	if err != nil {
+		s.handleError(w, r, err)
+		return
+	}
+	if err := s.validateSupportNodeQuery(r, node); err != nil {
+		s.handleError(w, r, err)
+		return
+	}
+	if err := s.auditSupportRead(r, node.ID, "support_access.item_opened"); err != nil {
 		s.handleError(w, r, err)
 		return
 	}
@@ -215,6 +323,72 @@ func (s *Server) copyNode(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusCreated, node)
 }
 
+func (s *Server) saveNodeCopy(w http.ResponseWriter, r *http.Request) {
+	if !s.checkScope(w, r, string(auth.ScopeFilesWrite)) {
+		return
+	}
+	var body struct {
+		ParentID    string               `json:"parent_id"`
+		ParentIDAlt string               `json:"parentId"`
+		Name        string               `json:"name"`
+		Conflict    uploads.ConflictMode `json:"conflict"`
+	}
+	if err := decodeBody(w, r, &body); err != nil {
+		WriteProblem(w, r, http.StatusBadRequest, "invalid_request", "Invalid request", err.Error())
+		return
+	}
+	if body.ParentID == "" {
+		body.ParentID = body.ParentIDAlt
+	}
+	p := principal(r)
+	if body.ParentID == "" {
+		user, err := s.runtime.AccountRepo.GetUserByID(r.Context(), p.UserID)
+		if err != nil {
+			s.handleError(w, r, err)
+			return
+		}
+		body.ParentID = user.RootNodeID
+	}
+	if body.Conflict == "" {
+		body.Conflict = uploads.ConflictKeepBoth
+	}
+	if body.Conflict != uploads.ConflictFail && body.Conflict != uploads.ConflictKeepBoth {
+		s.handleError(w, r, files.NewError(files.CodeInvalid, "save file copy", chi.URLParam(r, "nodeID"), "conflict must be fail or keep_both"))
+		return
+	}
+	sourceID := chi.URLParam(r, "nodeID")
+	sourceAccess, err := files.Authorize(r.Context(), s.runtime.Database.Reader(), p.UserID, sourceID, files.ActionRead, time.Now().UTC())
+	if err != nil {
+		s.handleError(w, r, err)
+		return
+	}
+	if sourceAccess.Support {
+		s.handleError(w, r, files.NewError(files.CodeForbidden, "save file copy", sourceID, "support access cannot save copies"))
+		return
+	}
+	destination, err := s.runtime.Files.Get(r.Context(), p.UserID, body.ParentID)
+	if err != nil {
+		s.handleError(w, r, err)
+		return
+	}
+	if destination.OwnerID != p.UserID || destination.Kind != files.KindFolder {
+		s.handleError(w, r, files.NewError(files.CodeForbidden, "save file copy", body.ParentID, "destination must be a folder owned by the recipient"))
+		return
+	}
+	upload, err := s.runtime.Uploads.SaveCopy(r.Context(), uploads.SaveCopyRequest{
+		ActorID: p.UserID, SourceNodeID: sourceID, DestinationID: body.ParentID,
+		Name: body.Name, ConflictMode: body.Conflict,
+	})
+	if err != nil {
+		s.handleError(w, r, err)
+		return
+	}
+	if upload.NodeID != nil {
+		w.Header().Set("Location", "/api/v1/nodes/"+*upload.NodeID)
+	}
+	WriteJSON(w, http.StatusCreated, upload)
+}
+
 func (s *Server) trashNode(w http.ResponseWriter, r *http.Request) {
 	s.nodeRevisionAction(w, r, s.runtime.Files.Trash)
 }
@@ -332,6 +506,14 @@ func (s *Server) content(w http.ResponseWriter, r *http.Request) {
 	}
 	resolved, err := s.runtime.Files.Content(r.Context(), principal(r).UserID, chi.URLParam(r, "nodeID"), r.URL.Query().Get("version_id"))
 	if err != nil {
+		s.handleError(w, r, err)
+		return
+	}
+	if err := s.validateSupportNodeQuery(r, resolved.Node); err != nil {
+		s.handleError(w, r, err)
+		return
+	}
+	if err := s.auditSupportRead(r, resolved.Node.ID, "support_access.content_downloaded"); err != nil {
 		s.handleError(w, r, err)
 		return
 	}
