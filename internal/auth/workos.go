@@ -254,6 +254,23 @@ func (p *WorkOSProvider) RevokeSession(ctx context.Context, sessionID string) er
 	return nil
 }
 
+// DeleteUser permanently removes an identity only after Arca's durable local
+// deletion processor has completed transfer or purge. A missing WorkOS user is
+// success so a lost response can be retried idempotently.
+func (p *WorkOSProvider) DeleteUser(ctx context.Context, workosUserID string) error {
+	if workosUserID == "" {
+		return errors.New("auth: WorkOS user id is required")
+	}
+	if err := p.client.UserManagement().Delete(ctx, workosUserID); err != nil {
+		var notFound *workos.NotFoundError
+		if errors.As(err, &notFound) {
+			return nil
+		}
+		return fmt.Errorf("auth: delete WorkOS user: %w", err)
+	}
+	return nil
+}
+
 func optionalString(value string) *string {
 	if value == "" {
 		return nil
