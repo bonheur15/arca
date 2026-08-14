@@ -244,9 +244,22 @@ func (s *Service) SuspendUser(ctx context.Context, userID string, mutation Mutat
 	return s.setState(ctx, userID, StateSuspended, nil, "user.suspended", mutation)
 }
 
-func (s *Service) ScheduleDeletion(ctx context.Context, userID string, mutation MutationContext) (*User, error) {
-	due := s.now().UTC().Add(7 * 24 * time.Hour)
-	return s.setState(ctx, userID, StateDeletionPending, &due, "user.deletion_scheduled", mutation)
+func (s *Service) ScheduleDeletion(ctx context.Context, userID string, plan DeletionPlan, mutation MutationContext) (*User, error) {
+	if err := s.requireSuperadmin(ctx, mutation.ActorID); err != nil {
+		return nil, err
+	}
+	user, deletion, err := s.repository.ScheduleDeletion(ctx, userID, mutation.ActorID, plan)
+	if err != nil {
+		return nil, err
+	}
+	metadata := map[string]any{"mode": deletion.Mode, "job_id": deletion.JobID, "due_at": deletion.DueAt}
+	if deletion.TransferToUserID != "" {
+		metadata["transfer_to_user_id"] = deletion.TransferToUserID
+	}
+	if err := s.record(ctx, mutation, "user.deletion_scheduled", "user", userID, metadata); err != nil {
+		return user, committedAudit(err)
+	}
+	return user, nil
 }
 
 func (s *Service) setState(ctx context.Context, userID string, state State, due *time.Time, action string, mutation MutationContext) (*User, error) {
