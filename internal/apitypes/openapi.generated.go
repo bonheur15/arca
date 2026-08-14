@@ -14,6 +14,26 @@ const (
 	CookieAuthScopes = "cookieAuth.Scopes"
 )
 
+// Defines values for AdminUserUpdateAction.
+const (
+	Activate AdminUserUpdateAction = "activate"
+	Delete   AdminUserUpdateAction = "delete"
+	Restore  AdminUserUpdateAction = "restore"
+	Suspend  AdminUserUpdateAction = "suspend"
+)
+
+// Defines values for AdminUserUpdateDeletionMode.
+const (
+	Purge    AdminUserUpdateDeletionMode = "purge"
+	Transfer AdminUserUpdateDeletionMode = "transfer"
+)
+
+// Defines values for AdminUserUpdateRole.
+const (
+	AdminUserUpdateRoleMember     AdminUserUpdateRole = "member"
+	AdminUserUpdateRoleSuperadmin AdminUserUpdateRole = "superadmin"
+)
+
 // Defines values for NodeKind.
 const (
 	File   NodeKind = "file"
@@ -67,8 +87,8 @@ const (
 
 // Defines values for UserRole.
 const (
-	Member     UserRole = "member"
-	Superadmin UserRole = "superadmin"
+	UserRoleMember     UserRole = "member"
+	UserRoleSuperadmin UserRole = "superadmin"
 )
 
 // Defines values for UserState.
@@ -86,6 +106,25 @@ const (
 	Csv  AdminListAuditEventsParamsFormat = "csv"
 	Json AdminListAuditEventsParamsFormat = "json"
 )
+
+// AdminUserUpdate defines model for AdminUserUpdate.
+type AdminUserUpdate struct {
+	Action           *AdminUserUpdateAction       `json:"action,omitempty"`
+	DeletionMode     *AdminUserUpdateDeletionMode `json:"deletionMode,omitempty"`
+	QuotaBytes       *int64                       `json:"quotaBytes,omitempty"`
+	QuotaUnlimited   *bool                        `json:"quotaUnlimited,omitempty"`
+	Role             *AdminUserUpdateRole         `json:"role,omitempty"`
+	TransferToUserId *openapi_types.UUID          `json:"transferToUserId,omitempty"`
+}
+
+// AdminUserUpdateAction defines model for AdminUserUpdate.Action.
+type AdminUserUpdateAction string
+
+// AdminUserUpdateDeletionMode defines model for AdminUserUpdate.DeletionMode.
+type AdminUserUpdateDeletionMode string
+
+// AdminUserUpdateRole defines model for AdminUserUpdate.Role.
+type AdminUserUpdateRole string
 
 // FileVersion defines model for FileVersion.
 type FileVersion struct {
@@ -129,7 +168,9 @@ type Policy struct {
 	AllowApiTokens        bool      `json:"allow_api_tokens"`
 	AllowInternalSharing  bool      `json:"allow_internal_sharing"`
 	AllowPublicSharing    bool      `json:"allow_public_sharing"`
+	AllowedMimeGroups     *[]string `json:"allowed_mime_groups,omitempty"`
 	BlockedExtensions     *[]string `json:"blocked_extensions,omitempty"`
+	DownloadRateBytes     *int64    `json:"download_rate_bytes"`
 	MaxActivePublicShares *int      `json:"max_active_public_shares,omitempty"`
 	MaxConcurrentUploads  *int      `json:"max_concurrent_uploads,omitempty"`
 	MaxFileBytes          *int64    `json:"max_file_bytes,omitempty"`
@@ -139,6 +180,7 @@ type Policy struct {
 	MaxPublicTtlMinutes   *int      `json:"max_public_ttl_minutes,omitempty"`
 	QuotaBytes            int64     `json:"quota_bytes"`
 	Unlimited             bool      `json:"unlimited"`
+	UploadRateBytes       *int64    `json:"upload_rate_bytes"`
 }
 
 // Preferences defines model for Preferences.
@@ -227,15 +269,20 @@ type UploadState string
 
 // User defines model for User.
 type User struct {
+	CreatedAt      time.Time           `json:"created_at"`
+	DeletionDueAt  *time.Time          `json:"deletion_due_at"`
 	DisplayName    *string             `json:"display_name,omitempty"`
 	Email          openapi_types.Email `json:"email"`
 	Id             openapi_types.UUID  `json:"id"`
-	Preferences    *Preferences        `json:"preferences,omitempty"`
+	LastSignInAt   *time.Time          `json:"last_sign_in_at"`
+	Preferences    Preferences         `json:"preferences"`
 	QuotaBytes     int64               `json:"quota_bytes"`
-	QuotaUnlimited *bool               `json:"quota_unlimited,omitempty"`
+	QuotaUnlimited bool                `json:"quota_unlimited"`
 	ReservedBytes  int64               `json:"reserved_bytes"`
 	Role           UserRole            `json:"role"`
+	RootNodeId     *openapi_types.UUID `json:"root_node_id,omitempty"`
 	State          UserState           `json:"state"`
+	UpdatedAt      time.Time           `json:"updated_at"`
 	UsedBytes      int64               `json:"used_bytes"`
 	Username       string              `json:"username"`
 }
@@ -311,14 +358,6 @@ type AdminStartSupportAccessJSONBody map[string]interface{}
 
 // AdminCreateUserJSONBody defines parameters for AdminCreateUser.
 type AdminCreateUserJSONBody map[string]interface{}
-
-// AdminUpdateUserJSONBody defines parameters for AdminUpdateUser.
-type AdminUpdateUserJSONBody map[string]interface{}
-
-// AdminUpdateUserParams defines parameters for AdminUpdateUser.
-type AdminUpdateUserParams struct {
-	IfMatch IfMatch `json:"If-Match"`
-}
 
 // StartMagicAuthJSONBody defines parameters for StartMagicAuth.
 type StartMagicAuthJSONBody struct {
@@ -485,7 +524,7 @@ type AdminStartSupportAccessJSONRequestBody AdminStartSupportAccessJSONBody
 type AdminCreateUserJSONRequestBody AdminCreateUserJSONBody
 
 // AdminUpdateUserJSONRequestBody defines body for AdminUpdateUser for application/json ContentType.
-type AdminUpdateUserJSONRequestBody AdminUpdateUserJSONBody
+type AdminUpdateUserJSONRequestBody = AdminUserUpdate
 
 // StartMagicAuthJSONRequestBody defines body for StartMagicAuth for application/json ContentType.
 type StartMagicAuthJSONRequestBody StartMagicAuthJSONBody
