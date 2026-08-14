@@ -353,7 +353,7 @@ export function UploadTray() {
   const active = uploads.filter((upload) => ["queued", "uploading", "finalizing", "retrying"].includes(upload.state)).length;
   const complete = uploads.filter((upload) => upload.state === "completed").length;
   return (
-    <motion.section className="upload-tray" initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} aria-label="Uploads">
+    <motion.section aria-atomic="false" aria-label="Uploads" aria-live="polite" className="upload-tray" initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }}>
       <button className="upload-tray__head" onClick={() => setCollapsed((value) => !value)} type="button">
         <span className="upload-tray__title">{active ? `${active} upload${active === 1 ? "" : "s"} in progress` : `${complete} upload${complete === 1 ? "" : "s"} complete`}</span>
         <ChevronDown className={collapsed ? "" : "rotate-180"} size={17} />
