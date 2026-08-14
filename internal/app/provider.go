@@ -93,3 +93,27 @@ func (p *DynamicProvider) RevokeSession(ctx context.Context, sessionID string) e
 	}
 	return delegate.RevokeSession(ctx, sessionID)
 }
+
+func (p *DynamicProvider) ListSessions(ctx context.Context, workOSUserID string, limit int) ([]auth.RemoteSession, error) {
+	delegate, err := p.get()
+	if err != nil {
+		return nil, err
+	}
+	directory, ok := delegate.(auth.SessionDirectory)
+	if !ok {
+		return nil, errors.New("configured identity provider does not support session listing")
+	}
+	return directory.ListSessions(ctx, workOSUserID, limit)
+}
+
+func (p *DynamicProvider) ListIdentityEvents(ctx context.Context, after string, limit int) ([]auth.IdentityEvent, string, error) {
+	delegate, err := p.get()
+	if err != nil {
+		return nil, after, err
+	}
+	source, ok := delegate.(auth.EventSource)
+	if !ok {
+		return nil, after, errors.New("configured identity provider does not support event polling")
+	}
+	return source.ListIdentityEvents(ctx, after, limit)
+}
