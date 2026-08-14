@@ -23,6 +23,7 @@ const (
 	CodeUploadLimit          ErrorCode = "upload_limit_exceeded"
 	CodeOffsetMismatch       ErrorCode = "upload_offset_mismatch"
 	CodeChecksumMismatch     ErrorCode = "checksum_mismatch"
+	CodeFileTypeBlocked      ErrorCode = "file_type_blocked"
 	CodeExpired              ErrorCode = "expired"
 	CodeInvalidState         ErrorCode = "invalid_state"
 	CodeCrossOwnerCopy       ErrorCode = "cross_owner_copy_requires_blob_copy"
