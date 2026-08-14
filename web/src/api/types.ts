@@ -242,6 +242,14 @@ export interface Job {
   createdAt: string;
 }
 
+export interface Notification {
+  id: string;
+  kind: string;
+  payload: Record<string, unknown>;
+  readAt: string | null;
+  createdAt: string;
+}
+
 export interface InstanceSettings {
   instanceName: string;
   publicUrl: string;
