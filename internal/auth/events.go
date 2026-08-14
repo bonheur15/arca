@@ -135,6 +135,11 @@ func (r *EventReconciler) PollOnce(ctx context.Context, limit int) (int, error) 
 		_ = r.recordPollFailure(ctx, err)
 		return 0, err
 	}
+	if len(events) > 0 && next == cursor {
+		err := errors.New("auth: WorkOS event source did not advance its cursor")
+		_ = r.recordPollFailure(ctx, err)
+		return 0, err
+	}
 	for _, event := range events {
 		if err := r.apply(ctx, event); err != nil {
 			_ = r.recordPollFailure(ctx, err)
@@ -145,6 +150,40 @@ func (r *EventReconciler) PollOnce(ctx context.Context, limit int) (int, error) 
 		return 0, err
 	}
 	return len(events), nil
+}
+
+// Run polls immediately and then at interval until cancellation. Poll errors
+// are reported but remain failure-isolated so a temporary WorkOS outage does
+// not stop Arca's file-serving path.
+func (r *EventReconciler) Run(ctx context.Context, interval time.Duration, report func(error)) error {
+	if interval <= 0 {
+		interval = 30 * time.Second
+	}
+	poll := func() {
+		for range 10 { // Bound catch-up work per tick.
+			count, err := r.PollOnce(ctx, 100)
+			if err != nil {
+				if report != nil {
+					report(err)
+				}
+				return
+			}
+			if count < 100 {
+				return
+			}
+		}
+	}
+	poll()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			poll()
+		}
+	}
 }
 
 func (r *EventReconciler) apply(ctx context.Context, event IdentityEvent) error {
@@ -162,18 +201,14 @@ func (r *EventReconciler) apply(ctx context.Context, event IdentityEvent) error 
 		}
 		return r.audit.Record(ctx, audit.Event{ActorID: nil, Action: "identity.user_updated", TargetType: "user", TargetID: user.ID})
 	case EventUserDeleted:
-		user, err := r.accounts.GetUserByWorkOSID(ctx, event.WorkOSUserID)
+		user, err := r.accounts.SuspendIdentityDeleted(ctx, event.WorkOSUserID)
 		if errors.Is(err, accounts.ErrNotFound) {
 			return nil
 		}
 		if err != nil {
 			return err
 		}
-		updated, err := r.accounts.SetState(ctx, user.ID, accounts.StateSuspended, nil)
-		if err != nil {
-			return err
-		}
-		return r.audit.Record(ctx, audit.Event{ActorID: nil, Action: "identity.user_deleted", TargetType: "user", TargetID: updated.ID})
+		return r.audit.Record(ctx, audit.Event{ActorID: nil, Action: "identity.user_deleted", TargetType: "user", TargetID: user.ID})
 	case EventSessionRevoked:
 		expiresAt := event.ExpiresAt
 		if expiresAt.IsZero() || !expiresAt.After(r.now()) {
