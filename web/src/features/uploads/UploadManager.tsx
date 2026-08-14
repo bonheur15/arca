@@ -29,6 +29,7 @@ interface UploadRecord extends UploadItem {
   controller?: AbortController | undefined;
   conflictMode?: "fail" | "keep_both" | "replace";
   replaceNodeId?: string | undefined;
+  replaceRevision?: number | undefined;
 }
 
 interface UploadContextValue {
@@ -156,6 +157,7 @@ export function UploadProvider({ children }: { children: ReactNode }) {
           ...(upload.parentId ? [`parent_id ${encodeMetadata(upload.parentId)}`] : []),
           `conflict ${encodeMetadata(upload.conflictMode ?? "fail")}`,
           ...(upload.replaceNodeId ? [`replace_node_id ${encodeMetadata(upload.replaceNodeId)}`] : []),
+          ...(upload.replaceRevision ? [`replace_revision ${encodeMetadata(String(upload.replaceRevision))}`] : []),
         ].join(",");
         const response = await fetch("/api/v1/uploads", {
           method: "POST",
@@ -318,7 +320,7 @@ export function UploadProvider({ children }: { children: ReactNode }) {
         const listing = await api.nodes(upload.parentId ? { parentId: upload.parentId } : {});
         const existing = listing.items.find((node) => node.kind === "file" && node.name.localeCompare(upload.name, undefined, { sensitivity: "base" }) === 0);
         if (!existing) throw new Error("The existing item is a folder and cannot be replaced by a file.");
-        patchRecord(id, { state: "queued", error: undefined, conflictMode: "replace", replaceNodeId: existing.id });
+        patchRecord(id, { state: "queued", error: undefined, conflictMode: "replace", replaceNodeId: existing.id, replaceRevision: existing.revision });
       } catch (error) {
         patchRecord(id, { state: "failed", error: error instanceof Error ? error.message : "The existing file could not be replaced." });
       }
