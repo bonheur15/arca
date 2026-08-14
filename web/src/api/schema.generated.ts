@@ -20,7 +20,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/bootstrap/configure": {
+    "/bootstrap/validate": {
         parameters: {
             query?: never;
             header?: never;
@@ -29,7 +29,23 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        post: operations["configureBootstrap"];
+        post: operations["validateBootstrapCode"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/bootstrap/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["startBootstrap"];
         delete?: never;
         options?: never;
         head?: never;
@@ -100,6 +116,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listSessions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sessions/{sessionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["revokeSession"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/session": {
         parameters: {
             query?: never;
@@ -139,9 +187,9 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        get: operations["getAccessRequestStatus"];
         put?: never;
-        post: operations["getAccessRequestStatus"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -161,7 +209,7 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        patch?: never;
+        patch: operations["updateMe"];
         trace?: never;
     };
     "/me/preferences": {
@@ -246,19 +294,96 @@ export interface paths {
         patch: operations["updateNode"];
         trace?: never;
     };
-    "/nodes/{nodeId}/{action}": {
+    "/nodes/{nodeId}/move": {
         parameters: {
             query?: never;
             header?: never;
-            path: {
-                nodeId: components["parameters"]["NodeID"];
-                action: "move" | "copy" | "trash" | "restore" | "purge";
-            };
+            path?: never;
             cookie?: never;
         };
         get?: never;
         put?: never;
-        post: operations["mutateNode"];
+        post: operations["moveNode"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/nodes/{nodeId}/copy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["copyNode"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/nodes/{nodeId}/save-copy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["saveSharedFileCopy"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/nodes/{nodeId}/trash": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["trashNode"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/nodes/{nodeId}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["restoreNode"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/nodes/{nodeId}/purge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["purgeNode"];
         delete?: never;
         options?: never;
         head?: never;
@@ -275,6 +400,22 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["bulkMutateNodes"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/nodes/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["downloadNodeArchive"];
         delete?: never;
         options?: never;
         head?: never;
@@ -307,6 +448,22 @@ export interface paths {
         get: operations["listFileVersions"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/files/{nodeId}/versions/{versionId}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["restoreFileVersion"];
         delete?: never;
         options?: never;
         head?: never;
@@ -354,7 +511,55 @@ export interface paths {
         };
         get: operations["listFavorites"];
         put?: never;
-        post: operations["addFavorite"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/favorites/{nodeId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["addFavorite"];
+        post?: never;
+        delete: operations["removeFavorite"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/trash": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listTrash"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/shared": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listSharedWithMe"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -434,7 +639,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        get: operations["listPublicShares"];
         put?: never;
         post: operations["createPublicShare"];
         delete?: never;
@@ -483,6 +688,22 @@ export interface paths {
             cookie?: never;
         };
         get: operations["getPublicBundle"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/public/files/{nodeId}/content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["downloadPublicFile"];
         put?: never;
         post?: never;
         delete?: never;
@@ -555,6 +776,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/support-access": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getActiveSupportAccess"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/support-access/{accessId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["endSupportAccess"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/users": {
         parameters: {
             query?: never;
@@ -603,7 +856,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/admin/requests/{requestId}/{decision}": {
+    "/admin/requests/{requestId}": {
         parameters: {
             query?: never;
             header?: never;
@@ -619,16 +872,112 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/admin/{resource}": {
+    "/admin/storage": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get: operations["adminGetResource"];
+        get: operations["adminGetStorage"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["adminListJobs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/jobs/{jobId}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["adminRetryJob"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/audit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["adminListAuditEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["adminGetSettings"];
+        put: operations["adminUpdateSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/policies/{userId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["adminGetPolicy"];
+        put: operations["adminUpdatePolicy"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/support-access": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["adminStartSupportAccess"];
         delete?: never;
         options?: never;
         head?: never;
@@ -689,6 +1038,93 @@ export interface components {
             created_at: string;
             /** Format: date-time */
             updated_at: string;
+        };
+        FileVersion: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            node_id: string;
+            /** Format: int64 */
+            sequence: number;
+            /** Format: int64 */
+            size_bytes: number;
+            sha256: string;
+            mime_type: string;
+            /** Format: uuid */
+            created_by: string;
+            /** Format: date-time */
+            created_at: string;
+        };
+        Share: {
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            permission: "viewer" | "editor";
+            roots: components["schemas"]["Node"][];
+            recipients: components["schemas"]["User"][];
+            /** Format: date-time */
+            expires_at?: string | null;
+            allow_editor_uploads?: boolean;
+            /** Format: int64 */
+            editor_byte_allowance?: number | null;
+            /** Format: uuid */
+            created_by: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        PublicShare: {
+            /** Format: uuid */
+            id: string;
+            roots: components["schemas"]["Node"][];
+            /** Format: date-time */
+            expires_at: string;
+            redemption_limit: number;
+            redemption_count: number;
+            /** @enum {string} */
+            state: "active" | "expired" | "exhausted" | "revoked";
+            /** Format: date-time */
+            created_at: string;
+        };
+        Upload: {
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            state: "pending" | "receiving" | "finalizing" | "completed" | "cancelled" | "expired" | "failed";
+            /** Format: int64 */
+            expected_bytes: number;
+            /** Format: int64 */
+            committed_bytes: number;
+            /** Format: date-time */
+            expires_at: string;
+            /** Format: uuid */
+            parent_id: string;
+            filename: string;
+            /** @enum {string} */
+            conflict_mode: "error" | "keep_both" | "replace";
+            /** Format: uuid */
+            node_id?: string | null;
+            /** Format: uuid */
+            current_version_id?: string | null;
+        };
+        Policy: {
+            /** Format: int64 */
+            quota_bytes: number;
+            unlimited: boolean;
+            /** Format: int64 */
+            max_file_bytes?: number;
+            /** Format: int64 */
+            max_items?: number;
+            allow_internal_sharing: boolean;
+            allow_public_sharing: boolean;
+            allow_api_tokens: boolean;
+            max_concurrent_uploads?: number;
+            max_pending_uploads?: number;
+            max_active_public_shares?: number;
+            max_public_ttl_minutes?: number;
+            max_public_redemptions?: number;
+            blocked_extensions?: string[];
         };
         Session: {
             authenticated: boolean;
@@ -752,6 +1188,33 @@ export interface components {
             };
             content: {
                 "application/json": components["schemas"]["User"];
+            };
+        };
+        /** @description Upload */
+        Upload: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Upload"];
+            };
+        };
+        /** @description File version */
+        FileVersion: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["FileVersion"];
+            };
+        };
+        /** @description User policy */
+        Policy: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Policy"];
             };
         };
         /** @description Session */
@@ -823,7 +1286,7 @@ export interface operations {
             200: components["responses"]["BootstrapStatus"];
         };
     };
-    configureBootstrap: {
+    validateBootstrapCode: {
         parameters: {
             query?: never;
             header?: never;
@@ -833,6 +1296,19 @@ export interface operations {
         requestBody: components["requestBodies"]["JSON"];
         responses: {
             200: components["responses"]["JSON"];
+            default: components["responses"]["Problem"];
+        };
+    };
+    startBootstrap: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: components["requestBodies"]["JSON"];
+        responses: {
+            202: components["responses"]["JSON"];
             default: components["responses"]["Problem"];
         };
     };
@@ -907,6 +1383,40 @@ export interface operations {
             default: components["responses"]["Problem"];
         };
     };
+    listSessions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["List"];
+            default: components["responses"]["Problem"];
+        };
+    };
+    revokeSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Session revoked */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
     getSession: {
         parameters: {
             query?: never;
@@ -935,12 +1445,14 @@ export interface operations {
     };
     getAccessRequestStatus: {
         parameters: {
-            query?: never;
+            query: {
+                token: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
         };
-        requestBody: components["requestBodies"]["JSON"];
+        requestBody?: never;
         responses: {
             200: components["responses"]["JSON"];
             default: components["responses"]["Problem"];
@@ -954,6 +1466,19 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            200: components["responses"]["User"];
+            default: components["responses"]["Problem"];
+        };
+    };
+    updateMe: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: components["requestBodies"]["JSON"];
         responses: {
             200: components["responses"]["User"];
             default: components["responses"]["Problem"];
@@ -991,6 +1516,8 @@ export interface operations {
         parameters: {
             query?: {
                 parent_id?: string;
+                /** @description Target user for an active audited support session. */
+                support_user?: string;
                 cursor?: components["parameters"]["Cursor"];
                 limit?: components["parameters"]["Limit"];
             };
@@ -1049,28 +1576,110 @@ export interface operations {
             default: components["responses"]["Problem"];
         };
     };
-    mutateNode: {
+    moveNode: {
         parameters: {
             query?: never;
             header: {
                 "If-Match": components["parameters"]["IfMatch"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path: {
                 nodeId: components["parameters"]["NodeID"];
-                action: "move" | "copy" | "trash" | "restore" | "purge";
             };
             cookie?: never;
         };
         requestBody: components["requestBodies"]["JSON"];
         responses: {
-            200: components["responses"]["JSON"];
-            /** @description Completed without a representation */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
+            200: components["responses"]["Node"];
+            default: components["responses"]["Problem"];
+        };
+    };
+    copyNode: {
+        parameters: {
+            query?: never;
+            header: {
+                "If-Match": components["parameters"]["IfMatch"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
+            path: {
+                nodeId: components["parameters"]["NodeID"];
+            };
+            cookie?: never;
+        };
+        requestBody: components["requestBodies"]["JSON"];
+        responses: {
+            201: components["responses"]["Node"];
+            default: components["responses"]["Problem"];
+        };
+    };
+    saveSharedFileCopy: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                nodeId: components["parameters"]["NodeID"];
+            };
+            cookie?: never;
+        };
+        requestBody: components["requestBodies"]["JSON"];
+        responses: {
+            201: components["responses"]["Upload"];
+            default: components["responses"]["Problem"];
+        };
+    };
+    trashNode: {
+        parameters: {
+            query?: never;
+            header: {
+                "If-Match": components["parameters"]["IfMatch"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                nodeId: components["parameters"]["NodeID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["Node"];
+            default: components["responses"]["Problem"];
+        };
+    };
+    restoreNode: {
+        parameters: {
+            query?: never;
+            header: {
+                "If-Match": components["parameters"]["IfMatch"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                nodeId: components["parameters"]["NodeID"];
+            };
+            cookie?: never;
+        };
+        requestBody: components["requestBodies"]["JSON"];
+        responses: {
+            200: components["responses"]["Node"];
+            default: components["responses"]["Problem"];
+        };
+    };
+    purgeNode: {
+        parameters: {
+            query?: never;
+            header: {
+                "If-Match": components["parameters"]["IfMatch"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                nodeId: components["parameters"]["NodeID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["JSON"];
             default: components["responses"]["Problem"];
         };
     };
@@ -1084,6 +1693,27 @@ export interface operations {
         requestBody: components["requestBodies"]["JSON"];
         responses: {
             200: components["responses"]["JSON"];
+            default: components["responses"]["Problem"];
+        };
+    };
+    downloadNodeArchive: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: components["requestBodies"]["JSON"];
+        responses: {
+            /** @description Streamed ZIP64 archive */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/zip": string;
+                };
+            };
             default: components["responses"]["Problem"];
         };
     };
@@ -1129,6 +1759,24 @@ export interface operations {
         requestBody?: never;
         responses: {
             200: components["responses"]["List"];
+            default: components["responses"]["Problem"];
+        };
+    };
+    restoreFileVersion: {
+        parameters: {
+            query?: never;
+            header: {
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                nodeId: components["parameters"]["NodeID"];
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            201: components["responses"]["FileVersion"];
             default: components["responses"]["Problem"];
         };
     };
@@ -1178,10 +1826,12 @@ export interface operations {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                nodeId: components["parameters"]["NodeID"];
+            };
             cookie?: never;
         };
-        requestBody: components["requestBodies"]["JSON"];
+        requestBody?: never;
         responses: {
             /** @description Favorite added */
             204: {
@@ -1190,6 +1840,53 @@ export interface operations {
                 };
                 content?: never;
             };
+            default: components["responses"]["Problem"];
+        };
+    };
+    removeFavorite: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                nodeId: components["parameters"]["NodeID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Favorite removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    listTrash: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["List"];
+            default: components["responses"]["Problem"];
+        };
+    };
+    listSharedWithMe: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["List"];
             default: components["responses"]["Problem"];
         };
     };
@@ -1251,7 +1948,7 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Current upload offset */
-            200: {
+            204: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1334,6 +2031,19 @@ export interface operations {
             default: components["responses"]["Problem"];
         };
     };
+    listPublicShares: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["List"];
+            default: components["responses"]["Problem"];
+        };
+    };
     createPublicShare: {
         parameters: {
             query?: never;
@@ -1399,6 +2109,36 @@ export interface operations {
         requestBody?: never;
         responses: {
             200: components["responses"]["List"];
+            default: components["responses"]["Problem"];
+        };
+    };
+    downloadPublicFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                nodeId: components["parameters"]["NodeID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Public file stream */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            /** @description Partial public file stream */
+            206: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             default: components["responses"]["Problem"];
         };
     };
@@ -1482,6 +2222,40 @@ export interface operations {
             };
         };
     };
+    getActiveSupportAccess: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["JSON"];
+            default: components["responses"]["Problem"];
+        };
+    };
+    endSupportAccess: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                accessId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Support access ended */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
     adminListUsers: {
         parameters: {
             query?: never;
@@ -1544,7 +2318,6 @@ export interface operations {
             header?: never;
             path: {
                 requestId: string;
-                decision: "approve" | "reject";
             };
             cookie?: never;
         };
@@ -1554,18 +2327,135 @@ export interface operations {
             default: components["responses"]["Problem"];
         };
     };
-    adminGetResource: {
+    adminGetStorage: {
         parameters: {
             query?: never;
             header?: never;
-            path: {
-                resource: "storage" | "policies" | "jobs" | "audit" | "settings";
-            };
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;
         responses: {
             200: components["responses"]["JSON"];
+            default: components["responses"]["Problem"];
+        };
+    };
+    adminListJobs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["List"];
+            default: components["responses"]["Problem"];
+        };
+    };
+    adminRetryJob: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                jobId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Job requeued */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    adminListAuditEvents: {
+        parameters: {
+            query?: {
+                limit?: components["parameters"]["Limit"];
+                format?: "json" | "csv";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["List"];
+            default: components["responses"]["Problem"];
+        };
+    };
+    adminGetSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["JSON"];
+            default: components["responses"]["Problem"];
+        };
+    };
+    adminUpdateSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: components["requestBodies"]["JSON"];
+        responses: {
+            200: components["responses"]["JSON"];
+            default: components["responses"]["Problem"];
+        };
+    };
+    adminGetPolicy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                userId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["Policy"];
+            default: components["responses"]["Problem"];
+        };
+    };
+    adminUpdatePolicy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                userId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: components["requestBodies"]["JSON"];
+        responses: {
+            200: components["responses"]["Policy"];
+            default: components["responses"]["Problem"];
+        };
+    };
+    adminStartSupportAccess: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: components["requestBodies"]["JSON"];
+        responses: {
+            201: components["responses"]["JSON"];
             default: components["responses"]["Problem"];
         };
     };
