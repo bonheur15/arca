@@ -72,10 +72,11 @@ function FileIcon({ node, size = 20 }: { node: ArcaNode; size?: number }) {
   return <File className="file-icon" size={size} />;
 }
 
-function NodeMenu({ node, collection, readOnly, onPreview, onDetails, onRename, onMove, onCopy, onSaveCopy, onShare, onTrash, onRestore, onPurge }: {
+function NodeMenu({ node, collection, readOnly, canSaveCopy, onPreview, onDetails, onRename, onMove, onCopy, onSaveCopy, onShare, onTrash, onRestore, onPurge }: {
   node: ArcaNode;
   collection: Collection;
   readOnly: boolean;
+  canSaveCopy: boolean;
   onPreview: () => void;
   onDetails: () => void;
   onRename: () => void;
@@ -98,7 +99,7 @@ function NodeMenu({ node, collection, readOnly, onPreview, onDetails, onRename, 
           {!readOnly && collection !== "trash" && node.capabilities.write ? <DropdownMenu.Item className="dropdown__item" onSelect={onRename}><Pencil size={16} />Rename</DropdownMenu.Item> : null}
           {!readOnly && collection !== "trash" && node.capabilities.write ? <DropdownMenu.Item className="dropdown__item" onSelect={onMove}><FolderInput size={16} />Move</DropdownMenu.Item> : null}
           {!readOnly && collection !== "trash" && node.capabilities.write ? <DropdownMenu.Item className="dropdown__item" onSelect={onCopy}><Copy size={16} />Make a copy</DropdownMenu.Item> : null}
-          {!readOnly && collection === "shared" && node.kind === "file" ? <DropdownMenu.Item className="dropdown__item" onSelect={onSaveCopy}><Box size={16} />Save a copy</DropdownMenu.Item> : null}
+          {!readOnly && canSaveCopy ? <DropdownMenu.Item className="dropdown__item" onSelect={onSaveCopy}><Box size={16} />Save a copy</DropdownMenu.Item> : null}
           {!readOnly && collection !== "trash" && node.capabilities.share ? <DropdownMenu.Item className="dropdown__item" onSelect={onShare}><Share2 size={16} />Share</DropdownMenu.Item> : null}
           {!readOnly && (collection === "trash" || node.capabilities.trash) ? <DropdownMenu.Separator className="dropdown__separator" /> : null}
           {!readOnly && collection === "trash" ? <DropdownMenu.Item className="dropdown__item" onSelect={onRestore}><RotateCcw size={16} />Restore</DropdownMenu.Item> : !readOnly && node.capabilities.trash ? <DropdownMenu.Item className="dropdown__item dropdown__item--danger" onSelect={onTrash}><Trash2 size={16} />Move to trash</DropdownMenu.Item> : null}
@@ -131,6 +132,7 @@ function FileList({
   onPurge,
   readOnly,
   supportUserId,
+  currentUserId,
 }: {
   nodes: ArcaNode[];
   collection: Collection;
@@ -148,6 +150,7 @@ function FileList({
   onPurge: (node: ArcaNode) => void;
   readOnly: boolean;
   supportUserId?: string | null;
+  currentUserId: string;
 }) {
   return (
     <div className="file-table" role="grid" aria-label="Files and folders">
@@ -182,7 +185,7 @@ function FileList({
               <span className="file-row__owner" role="gridcell">{node.owner.displayName || node.owner.username || "You"}</span>
               <span role="gridcell">{formatRelativeDate(node.updatedAt)}</span>
               <span role="gridcell">{node.kind === "folder" ? "—" : formatBytes(node.sizeBytes)}</span>
-              <span role="gridcell"><NodeMenu collection={collection} node={node} onCopy={() => onCopy(node)} onDetails={() => onDetails(node)} onMove={() => onMove(node)} onPreview={() => onPreview(node)} onPurge={() => onPurge(node)} onRename={() => onRename(node)} onRestore={() => onRestore(node)} onSaveCopy={() => onSaveCopy(node)} onShare={() => onShare(node)} onTrash={() => onTrash(node)} readOnly={readOnly} /></span>
+              <span role="gridcell"><NodeMenu canSaveCopy={node.kind === "file" && collection !== "trash" && (collection === "shared" || Boolean(node.owner.id && node.owner.id !== currentUserId))} collection={collection} node={node} onCopy={() => onCopy(node)} onDetails={() => onDetails(node)} onMove={() => onMove(node)} onPreview={() => onPreview(node)} onPurge={() => onPurge(node)} onRename={() => onRename(node)} onRestore={() => onRestore(node)} onSaveCopy={() => onSaveCopy(node)} onShare={() => onShare(node)} onTrash={() => onTrash(node)} readOnly={readOnly} /></span>
             </motion.div>
           );
         })}
@@ -191,7 +194,7 @@ function FileList({
   );
 }
 
-function FileGrid({ nodes, collection, selected, onSelect, onPreview, onDetails, onRename, onMove, onCopy, onSaveCopy, onShare, onTrash, onRestore, onPurge, readOnly, supportUserId }: Parameters<typeof FileList>[0]) {
+function FileGrid({ nodes, collection, selected, onSelect, onPreview, onDetails, onRename, onMove, onCopy, onSaveCopy, onShare, onTrash, onRestore, onPurge, readOnly, supportUserId, currentUserId }: Parameters<typeof FileList>[0]) {
   return (
     <div className="file-grid" role="grid" aria-label="Files and folders">
       {nodes.map((node) => {
@@ -199,7 +202,7 @@ function FileGrid({ nodes, collection, selected, onSelect, onPreview, onDetails,
         let holdTimer: number | undefined;
         return (
           <motion.article className={`file-card ${checked ? "file-card--selected" : ""}`} initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} key={node.id} onDoubleClick={() => onPreview(node)} onPointerCancel={() => window.clearTimeout(holdTimer)} onPointerDown={(event) => { if (event.pointerType === "touch") holdTimer = window.setTimeout(() => onSelect(node.id, true), 480); }} onPointerUp={() => window.clearTimeout(holdTimer)} role="gridcell">
-            <div className="file-card__top"><label className="check"><input aria-label={`Select ${node.name}`} checked={checked} onChange={(event) => onSelect(node.id, event.target.checked)} type="checkbox" /><span><Check size={12} /></span></label><NodeMenu collection={collection} node={node} onCopy={() => onCopy(node)} onDetails={() => onDetails(node)} onMove={() => onMove(node)} onPreview={() => onPreview(node)} onPurge={() => onPurge(node)} onRename={() => onRename(node)} onRestore={() => onRestore(node)} onSaveCopy={() => onSaveCopy(node)} onShare={() => onShare(node)} onTrash={() => onTrash(node)} readOnly={readOnly} /></div>
+            <div className="file-card__top"><label className="check"><input aria-label={`Select ${node.name}`} checked={checked} onChange={(event) => onSelect(node.id, event.target.checked)} type="checkbox" /><span><Check size={12} /></span></label><NodeMenu canSaveCopy={node.kind === "file" && collection !== "trash" && (collection === "shared" || Boolean(node.owner.id && node.owner.id !== currentUserId))} collection={collection} node={node} onCopy={() => onCopy(node)} onDetails={() => onDetails(node)} onMove={() => onMove(node)} onPreview={() => onPreview(node)} onPurge={() => onPurge(node)} onRename={() => onRename(node)} onRestore={() => onRestore(node)} onSaveCopy={() => onSaveCopy(node)} onShare={() => onShare(node)} onTrash={() => onTrash(node)} readOnly={readOnly} /></div>
             <button className="file-card__preview" onClick={() => onPreview(node)} type="button"><span className="file-card__arch"><FileIcon node={node} size={36} /></span></button>
             <div className="file-card__copy"><NodeName node={node} onPreview={() => onPreview(node)} supportUserId={supportUserId} /><span>{node.kind === "folder" ? formatRelativeDate(node.updatedAt) : `${formatBytes(node.sizeBytes)} · ${formatRelativeDate(node.updatedAt)}`}</span></div>
           </motion.article>
@@ -395,7 +398,7 @@ function ManagedShares() {
   );
 }
 
-export function FileBrowser({ collection, folderId = null, query = "", supportUserId = null }: { collection: Collection; folderId?: string | null; query?: string; supportUserId?: string | null | undefined }) {
+export function FileBrowser({ collection, currentUserId, folderId = null, query = "", supportUserId = null }: { collection: Collection; currentUserId: string; folderId?: string | null; query?: string; supportUserId?: string | null | undefined }) {
   const navigate = useNavigate();
   const routerSearch = useRouterState({ select: (state) => state.location.search as Record<string, unknown> });
   const view = routerSearch.view === "grid" ? "grid" : "list";
@@ -499,9 +502,9 @@ export function FileBrowser({ collection, folderId = null, query = "", supportUs
           </div>
         </div>
         {data.isPending ? <SkeletonRows /> : data.isError ? <ErrorState error={data.error} onRetry={() => void data.refetch()} /> : nodes.length === 0 ? <EmptyState icon={collection === "trash" ? "archive" : "empty"} title={readOnly ? "This vault is empty" : copy.emptyTitle} description={readOnly ? "There are no files or folders to inspect here." : copy.emptyDescription} action={!readOnly && collection === "files" ? <Button onClick={() => fileInput.current?.click()}><Upload size={17} />Upload your first file</Button> : undefined} /> : view === "grid" ? (
-          <FileGrid collection={collection} nodes={nodes} onCopy={(node) => setDestination({ node, mode: "copy" })} onDetails={setDetails} onMove={(node) => setDestination({ node, mode: "move" })} onPreview={openNode} onPurge={(node) => setConfirm({ node, action: "purge" })} onRename={setRenaming} onRestore={(node) => action.mutate({ node, kind: "restore" })} onSaveCopy={(node) => setDestination({ node, mode: "save-copy" })} onSelect={toggleSelect} onShare={(node) => setSharing([node])} onTrash={(node) => setConfirm({ node, action: "trash" })} readOnly={readOnly} selected={selected} supportUserId={supportUserId} />
+          <FileGrid collection={collection} currentUserId={currentUserId} nodes={nodes} onCopy={(node) => setDestination({ node, mode: "copy" })} onDetails={setDetails} onMove={(node) => setDestination({ node, mode: "move" })} onPreview={openNode} onPurge={(node) => setConfirm({ node, action: "purge" })} onRename={setRenaming} onRestore={(node) => action.mutate({ node, kind: "restore" })} onSaveCopy={(node) => setDestination({ node, mode: "save-copy" })} onSelect={toggleSelect} onShare={(node) => setSharing([node])} onTrash={(node) => setConfirm({ node, action: "trash" })} readOnly={readOnly} selected={selected} supportUserId={supportUserId} />
         ) : (
-          <FileList collection={collection} nodes={nodes} onCopy={(node) => setDestination({ node, mode: "copy" })} onDetails={setDetails} onMove={(node) => setDestination({ node, mode: "move" })} onPreview={openNode} onPurge={(node) => setConfirm({ node, action: "purge" })} onRename={setRenaming} onRestore={(node) => action.mutate({ node, kind: "restore" })} onSaveCopy={(node) => setDestination({ node, mode: "save-copy" })} onSelect={toggleSelect} onShare={(node) => setSharing([node])} onTrash={(node) => setConfirm({ node, action: "trash" })} readOnly={readOnly} selected={selected} supportUserId={supportUserId} />
+          <FileList collection={collection} currentUserId={currentUserId} nodes={nodes} onCopy={(node) => setDestination({ node, mode: "copy" })} onDetails={setDetails} onMove={(node) => setDestination({ node, mode: "move" })} onPreview={openNode} onPurge={(node) => setConfirm({ node, action: "purge" })} onRename={setRenaming} onRestore={(node) => action.mutate({ node, kind: "restore" })} onSaveCopy={(node) => setDestination({ node, mode: "save-copy" })} onSelect={toggleSelect} onShare={(node) => setSharing([node])} onTrash={(node) => setConfirm({ node, action: "trash" })} readOnly={readOnly} selected={selected} supportUserId={supportUserId} />
         )}
         {collection === "shared" ? <ManagedShares /> : null}
       </section>
