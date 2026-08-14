@@ -177,6 +177,39 @@ func (s *Server) auditSupportRead(r *http.Request, nodeID, action string) error 
 	})
 }
 
+func (s *Server) activeSupportAccess(w http.ResponseWriter, r *http.Request) {
+	p := principal(r)
+	if !p.Superadmin() {
+		s.handleError(w, r, accounts.ErrForbidden)
+		return
+	}
+	access, err := s.runtime.AccountRepo.GetActiveSupportAccess(r.Context(), p.UserID)
+	if err != nil {
+		s.handleError(w, r, err)
+		return
+	}
+	target, err := s.runtime.AccountRepo.GetUserByID(r.Context(), access.TargetUserID)
+	if err != nil {
+		s.handleError(w, r, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, map[string]any{"access": access, "target": target})
+}
+
+func (s *Server) revokeSupportAccess(w http.ResponseWriter, r *http.Request) {
+	p := principal(r)
+	if !p.Superadmin() {
+		s.handleError(w, r, accounts.ErrForbidden)
+		return
+	}
+	access, err := s.runtime.Accounts.RevokeSupportAccess(r.Context(), chi.URLParam(r, "accessID"), mutation(r, s.remoteIP(r)))
+	if err != nil {
+		s.handleError(w, r, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, access)
+}
+
 func (s *Server) getNode(w http.ResponseWriter, r *http.Request) {
 	if !s.checkScope(w, r, string(auth.ScopeFilesRead)) {
 		return
@@ -332,10 +365,12 @@ func (s *Server) saveNodeCopy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		ParentID    string               `json:"parent_id"`
-		ParentIDAlt string               `json:"parentId"`
-		Name        string               `json:"name"`
-		Conflict    uploads.ConflictMode `json:"conflict"`
+		ParentID      string               `json:"parent_id"`
+		ParentIDAlt   string               `json:"parentId"`
+		DestinationID string               `json:"destinationId"`
+		Name          string               `json:"name"`
+		Conflict      uploads.ConflictMode `json:"conflict"`
+		ConflictMode  uploads.ConflictMode `json:"conflictMode"`
 	}
 	if err := decodeBody(w, r, &body); err != nil {
 		WriteProblem(w, r, http.StatusBadRequest, "invalid_request", "Invalid request", err.Error())
@@ -343,6 +378,12 @@ func (s *Server) saveNodeCopy(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.ParentID == "" {
 		body.ParentID = body.ParentIDAlt
+	}
+	if body.ParentID == "" {
+		body.ParentID = body.DestinationID
+	}
+	if body.Conflict == "" {
+		body.Conflict = body.ConflictMode
 	}
 	p := principal(r)
 	if body.ParentID == "" {
@@ -440,6 +481,7 @@ const maxBulkRoots = 500
 type bulkMutationRequest struct {
 	Action           string             `json:"action"`
 	Items            []bulkMutationItem `json:"items"`
+	Nodes            []bulkMutationItem `json:"nodes"`
 	DestinationID    string             `json:"destination_id"`
 	DestinationIDAlt string             `json:"destinationId"`
 }
@@ -492,6 +534,12 @@ func (s *Server) bulkNodes(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.DestinationID == "" {
 		body.DestinationID = body.DestinationIDAlt
+	}
+	if len(body.Items) == 0 {
+		body.Items = body.Nodes
+	} else if len(body.Nodes) != 0 {
+		s.handleError(w, r, files.NewError(files.CodeInvalid, "bulk mutate nodes", "", "provide items or nodes, not both"))
+		return
 	}
 	body.Action = strings.ToLower(strings.TrimSpace(body.Action))
 	if body.Action != "move" && body.Action != "trash" && body.Action != "restore" && body.Action != "purge" {
@@ -560,7 +608,9 @@ func (s *Server) bulkNodes(w http.ResponseWriter, r *http.Request) {
 	}
 	response := map[string]any{"action": body.Action, "items": resultItems}
 	if body.Action == "purge" {
-		response["summary"] = purgeResult
+		response["summary"] = map[string]int64{
+			"nodes_deleted": purgeResult.NodesDeleted, "versions_deleted": purgeResult.VersionsDeleted, "blobs_queued": purgeResult.BlobsQueued,
+		}
 	}
 	WriteJSON(w, http.StatusOK, response)
 }
@@ -1169,6 +1219,11 @@ func (s *Server) serveResolvedContent(w http.ResponseWriter, r *http.Request, re
 		s.handleError(w, r, err)
 		return
 	}
+	rateUserID := resolved.Node.OwnerID
+	if p, ok := GetPrincipal(r.Context()); ok && p.UserID != "" {
+		rateUserID = p.UserID
+	}
+	seeker = newRateReadSeeker(r.Context(), seeker, s.downloadRate(r.Context(), rateUserID))
 	decision := preview.Decide(resolved.Node.Name, resolved.Version.MIMEType)
 	inline := r.URL.Query().Get("preview") == "1" && decision.Inline && preview.ValidatePreviewSize(decision, resolved.Version.SizeBytes) == nil
 	disposition := "attachment"
@@ -1195,9 +1250,10 @@ const (
 )
 
 type archiveRequest struct {
-	Roots   []string `json:"roots"`
-	NodeIDs []string `json:"node_ids"`
-	Name    string   `json:"name,omitempty"`
+	Roots      []string `json:"roots"`
+	NodeIDs    []string `json:"node_ids"`
+	NodeIDsAlt []string `json:"nodeIds"`
+	Name       string   `json:"name,omitempty"`
 }
 
 type archiveEntry struct {
@@ -1216,7 +1272,10 @@ func (s *Server) archiveNodes(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(body.Roots) == 0 {
 		body.Roots = body.NodeIDs
-	} else if len(body.NodeIDs) != 0 {
+		if len(body.Roots) == 0 {
+			body.Roots = body.NodeIDsAlt
+		}
+	} else if len(body.NodeIDs) != 0 || len(body.NodeIDsAlt) != 0 {
 		s.handleError(w, r, files.NewError(files.CodeInvalid, "create archive", "", "provide roots or node_ids, not both"))
 		return
 	}
@@ -1293,7 +1352,9 @@ func (s *Server) archiveNodes(w http.ResponseWriter, r *http.Request) {
 			s.logger.Error("archive file header failed", "request_id", RequestID(r.Context()), "node_id", entry.Node.ID, "error", err)
 			return
 		}
-		copied, copyErr := io.CopyBuffer(writer, io.LimitReader(reader, resolved.Version.SizeBytes), buffer)
+		limited := io.LimitReader(reader, resolved.Version.SizeBytes)
+		rateReader := newByteRateReader(r.Context(), limited, s.downloadRate(r.Context(), principal(r).UserID))
+		copied, copyErr := io.CopyBuffer(writer, rateReader, buffer)
 		closeErr := reader.Close()
 		if copyErr != nil || closeErr != nil || copied != resolved.Version.SizeBytes {
 			s.logger.Error("archive file stream failed", "request_id", RequestID(r.Context()), "node_id", entry.Node.ID,
@@ -1541,10 +1602,12 @@ func (s *Server) patchUpload(w http.ResponseWriter, r *http.Request) {
 		s.handleError(w, r, err)
 		return
 	}
-	upload, err := s.runtime.Uploads.Patch(r.Context(), uploads.PatchRequest{ActorID: principal(r).UserID, UploadID: chi.URLParam(r, "uploadID"), Offset: offset, ContentLength: r.ContentLength, Body: r.Body, ChecksumAlgorithm: checksum.Algorithm, Checksum: checksum.Digest})
+	p := principal(r)
+	body := newByteRateReader(r.Context(), r.Body, s.uploadRate(r.Context(), p.UserID))
+	upload, err := s.runtime.Uploads.Patch(r.Context(), uploads.PatchRequest{ActorID: p.UserID, UploadID: chi.URLParam(r, "uploadID"), Offset: offset, ContentLength: r.ContentLength, Body: body, ChecksumAlgorithm: checksum.Algorithm, Checksum: checksum.Digest})
 	if err != nil {
 		if files.ErrorCodeOf(err) == files.CodeOffsetMismatch {
-			if current, headErr := s.runtime.Uploads.Head(r.Context(), principal(r).UserID, chi.URLParam(r, "uploadID")); headErr == nil {
+			if current, headErr := s.runtime.Uploads.Head(r.Context(), p.UserID, chi.URLParam(r, "uploadID")); headErr == nil {
 				w.Header().Set("Upload-Offset", strconv.FormatInt(current.CommittedBytes, 10))
 			}
 		}
