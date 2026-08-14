@@ -167,7 +167,8 @@ export function SetupPage() {
   });
   const verify = useMutation({
     mutationFn: () => api.setupVerify({ setupCode, code: magicCode }),
-    onSuccess: async () => {
+    onSuccess: async (session) => {
+      queryClient.setQueryData(["session"], session);
       await queryClient.invalidateQueries();
       await navigate({ to: "/files" });
     },
