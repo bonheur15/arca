@@ -153,6 +153,7 @@ export interface ShareRecipient {
 
 export interface Share {
   id: string;
+  ownerId: string;
   roots: ArcaNode[];
   recipients: ShareRecipient[];
   permission: SharePermission;
