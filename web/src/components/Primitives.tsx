@@ -121,7 +121,7 @@ export function EmptyState({
   );
 }
 
-export function Field({ label, hint, error, children }: { label: string; hint?: string; error?: string; children: ReactNode }) {
+export function Field({ label, hint, error, children }: { label: string; hint?: string | undefined; error?: string | undefined; children: ReactNode }) {
   return (
     <label className="field">
       <span className="field__label">{label}</span>
