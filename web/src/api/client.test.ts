@@ -111,12 +111,12 @@ describe("API boundary parsing", () => {
       deletion_due_at: "2026-08-21T10:00:00Z",
     }));
 
-    const user = await api.updateUser("user-019", { action: "delete" });
+    const user = await api.updateUser("user-019", { action: "delete", deletionMode: "transfer", transferToUserId: "user-020" });
 
     const [, init] = request.mock.calls[0] ?? [];
     expect(request.mock.calls[0]?.[0]).toBe("/api/v1/admin/users/user-019");
     expect(init).toMatchObject({ method: "PATCH", credentials: "same-origin" });
-    expect(JSON.parse(String(init?.body))).toEqual({ action: "delete" });
+    expect(JSON.parse(String(init?.body))).toEqual({ action: "delete", deletionMode: "transfer", transferToUserId: "user-020" });
     expect(user.state).toBe("deletion_pending");
     expect(user.deletionDueAt).toBe("2026-08-21T10:00:00Z");
   });
