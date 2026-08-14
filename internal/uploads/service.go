@@ -10,6 +10,7 @@ import (
 	"hash"
 	"io"
 	"strings"
+	"sync"
 	"time"
 
 	"arca/internal/database"
@@ -18,14 +19,16 @@ import (
 )
 
 type Service struct {
-	db       *database.DB
-	storage  Storage
-	locks    keyedLocks
-	now      func() time.Time
-	newID    func() (string, error)
-	ttl      time.Duration
-	maxChunk int64
-	hook     FinalizeHook
+	db            *database.DB
+	storage       Storage
+	locks         keyedLocks
+	now           func() time.Time
+	newID         func() (string, error)
+	ttl           time.Duration
+	maxChunk      int64
+	hook          FinalizeHook
+	activeMu      sync.Mutex
+	activeByOwner map[string]int
 }
 
 type ServiceOptions struct {
@@ -53,7 +56,8 @@ func NewService(db *database.DB, storage Storage, opts ServiceOptions) *Service 
 	if maxChunk <= 0 {
 		maxChunk = DefaultMaxChunk
 	}
-	return &Service{db: db, storage: storage, now: now, newID: newID, ttl: ttl, maxChunk: maxChunk, hook: opts.FinalizeHook}
+	return &Service{db: db, storage: storage, now: now, newID: newID, ttl: ttl, maxChunk: maxChunk,
+		hook: opts.FinalizeHook, activeByOwner: make(map[string]int)}
 }
 
 func (s *Service) Create(ctx context.Context, request CreateRequest) (Upload, error) {
@@ -98,7 +102,8 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Upload, er
 	var maxItems, itemCount int64
 	err = tx.QueryRowContext(ctx, `SELECT p.max_file_bytes, p.max_pending_uploads,
 		u.used_bytes, u.reserved_bytes, u.quota_bytes, u.quota_unlimited, u.state, p.max_items,
-		(SELECT COUNT(*) FROM nodes WHERE owner_id = u.id)
+		(SELECT COUNT(*) FROM nodes WHERE owner_id = u.id AND parent_id IS NOT NULL) +
+		(SELECT COUNT(*) FROM uploads WHERE owner_id = u.id AND replace_node_id IS NULL AND state IN ('pending', 'finalizing'))
 		FROM users u JOIN user_policies p ON p.user_id = u.id WHERE u.id = ?`, access.OwnerID).Scan(
 		&maxFile, &maxPending, &used, &reserved, &quota, &unlimited, &ownerState, &maxItems, &itemCount)
 	if err != nil {
@@ -131,7 +136,13 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Upload, er
 	if err := tx.QueryRowContext(ctx, "SELECT filesystem_reserve_bytes FROM instance_settings WHERE singleton = 1").Scan(&filesystemReserve); err != nil {
 		return Upload{}, files.WrapError(files.CodeInvalid, op, "", err)
 	}
-	if request.ExpectedBytes > free || free-request.ExpectedBytes < filesystemReserve {
+	var outstandingHostBytes int64
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(expected_bytes - committed_bytes), 0)
+		FROM uploads WHERE state = 'pending'`).Scan(&outstandingHostBytes); err != nil {
+		return Upload{}, files.WrapError(files.CodeInvalid, op, "", err)
+	}
+	if free < filesystemReserve || outstandingHostBytes > free-filesystemReserve ||
+		request.ExpectedBytes > free-filesystemReserve-outstandingHostBytes {
 		return Upload{}, files.NewError(files.CodeDiskFull, op, "", "host filesystem reserve would be exceeded")
 	}
 
@@ -289,6 +300,17 @@ func (s *Service) Patch(ctx context.Context, request PatchRequest) (Upload, erro
 	if request.ContentLength > s.maxChunk {
 		return Upload{}, files.NewError(files.CodeInvalid, op, request.UploadID, "chunk exceeds server maximum")
 	}
+	free, err := s.storage.FreeBytes()
+	if err != nil {
+		return Upload{}, files.WrapError(files.CodeInvalid, op, request.UploadID, err)
+	}
+	var filesystemReserve int64
+	if err := s.db.Reader().QueryRowContext(ctx, "SELECT filesystem_reserve_bytes FROM instance_settings WHERE singleton = 1").Scan(&filesystemReserve); err != nil {
+		return Upload{}, files.WrapError(files.CodeInvalid, op, request.UploadID, err)
+	}
+	if free < filesystemReserve || request.ContentLength > free-filesystemReserve {
+		return Upload{}, files.NewError(files.CodeDiskFull, op, request.UploadID, "host filesystem reserve would be exceeded")
+	}
 	unlock := s.locks.lock(request.UploadID)
 	defer unlock()
 	upload, err := s.Head(ctx, request.ActorID, request.UploadID)
@@ -301,6 +323,11 @@ func (s *Service) Patch(ctx context.Context, request PatchRequest) (Upload, erro
 	if err := s.authorizePending(ctx, upload); err != nil {
 		return Upload{}, s.handlePendingAuthorizationFailure(ctx, upload, err)
 	}
+	releaseTransfer, err := s.beginTransfer(ctx, upload.OwnerID)
+	if err != nil {
+		return Upload{}, err
+	}
+	defer releaseTransfer()
 	if !s.now().Before(upload.ExpiresAt) {
 		_ = s.expireLocked(ctx, upload)
 		return Upload{}, files.NewError(files.CodeExpired, op, upload.ID, "upload expired")
@@ -432,6 +459,31 @@ func (s *Service) authorizePending(ctx context.Context, upload Upload) error {
 		}
 	}
 	return nil
+}
+
+func (s *Service) beginTransfer(ctx context.Context, ownerID string) (func(), error) {
+	var maximum int
+	if err := s.db.Reader().QueryRowContext(ctx, `SELECT max_concurrent_uploads FROM user_policies WHERE user_id = ?`, ownerID).Scan(&maximum); err != nil {
+		return nil, files.WrapError(files.CodeInvalid, "begin upload transfer", ownerID, err)
+	}
+	s.activeMu.Lock()
+	if s.activeByOwner[ownerID] >= maximum {
+		s.activeMu.Unlock()
+		return nil, files.NewError(files.CodeUploadLimit, "begin upload transfer", ownerID, "too many simultaneous upload transfers")
+	}
+	s.activeByOwner[ownerID]++
+	s.activeMu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			s.activeMu.Lock()
+			s.activeByOwner[ownerID]--
+			if s.activeByOwner[ownerID] == 0 {
+				delete(s.activeByOwner, ownerID)
+			}
+			s.activeMu.Unlock()
+		})
+	}, nil
 }
 
 func (s *Service) handlePendingAuthorizationFailure(ctx context.Context, upload Upload, cause error) error {
