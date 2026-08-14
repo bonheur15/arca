@@ -2,6 +2,8 @@ package database_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"testing/fstest"
 
@@ -72,5 +74,41 @@ func TestValidateSQLiteVersion(t *testing.T) {
 		if err := database.ValidateSQLiteVersion(version); err == nil {
 			t.Errorf("%s should be rejected", version)
 		}
+	}
+}
+
+func TestOpenRejectsDatabaseSymlink(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target.sqlite3")
+	if err := os.WriteFile(target, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "arca.sqlite3")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	_, err := database.Open(context.Background(), database.Config{
+		Path: link,
+		Migrations: fstest.MapFS{
+			"001_test.sql": {Data: []byte("CREATE TABLE widgets (id INTEGER);")},
+		},
+	})
+	if err == nil {
+		t.Fatal("database symlink was accepted")
+	}
+}
+
+func TestMigrateRejectsVersionGap(t *testing.T) {
+	t.Parallel()
+	_, err := database.Open(context.Background(), database.Config{
+		Path: t.TempDir() + "/arca.sqlite3",
+		Migrations: fstest.MapFS{
+			"001_one.sql":   {Data: []byte("CREATE TABLE one (id INTEGER);")},
+			"003_three.sql": {Data: []byte("CREATE TABLE three (id INTEGER);")},
+		},
+	})
+	if err == nil {
+		t.Fatal("migration gap was accepted")
 	}
 }
