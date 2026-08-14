@@ -49,6 +49,12 @@ func Migrate(ctx context.Context, db *sql.DB, migrationFS fs.FS) error {
 		return fmt.Errorf("no database migrations found")
 	}
 	sort.Slice(migrations, func(i, j int) bool { return migrations[i].version < migrations[j].version })
+	for index, migration := range migrations {
+		expected := index + 1
+		if migration.version != expected {
+			return fmt.Errorf("migration sequence is not contiguous: expected version %d, found %d (%s)", expected, migration.version, migration.name)
+		}
+	}
 
 	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
         version INTEGER PRIMARY KEY,
@@ -63,6 +69,24 @@ func Migrate(ctx context.Context, db *sql.DB, migrationFS fs.FS) error {
 	latest := migrations[len(migrations)-1].version
 	if highest > latest {
 		return fmt.Errorf("database schema version %d is newer than binary version %d", highest, latest)
+	}
+	appliedRows, err := db.QueryContext(ctx, "SELECT version FROM schema_migrations ORDER BY version")
+	if err != nil {
+		return fmt.Errorf("read migration ledger: %w", err)
+	}
+	for appliedRows.Next() {
+		var version int
+		if err := appliedRows.Scan(&version); err != nil {
+			appliedRows.Close()
+			return fmt.Errorf("scan migration ledger: %w", err)
+		}
+		if _, ok := seen[version]; !ok {
+			appliedRows.Close()
+			return fmt.Errorf("database contains unknown migration version %d", version)
+		}
+	}
+	if err := appliedRows.Close(); err != nil {
+		return fmt.Errorf("close migration ledger: %w", err)
 	}
 	for _, m := range migrations {
 		var applied int
