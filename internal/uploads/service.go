@@ -136,22 +136,31 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Upload, er
 	}
 
 	var replaceNode *string
+	var replaceRevision *int64
 	if request.ConflictMode == ConflictReplace {
 		if request.ReplaceNodeID == "" {
 			return Upload{}, files.NewError(files.CodeInvalid, op, "", "replace_node_id is required")
+		}
+		if request.ReplaceRevision <= 0 {
+			return Upload{}, files.NewError(files.CodePreconditionRequired, op, request.ReplaceNodeID, "a positive replace revision is required")
 		}
 		if _, err := files.Authorize(ctx, tx, request.ActorID, request.ReplaceNodeID, files.ActionReplace, now); err != nil {
 			return Upload{}, err
 		}
 		var ownerID, parentID, kind, nameKey string
+		var revision int64
 		var trashed sql.NullString
-		if err := tx.QueryRowContext(ctx, "SELECT owner_id, parent_id, kind, name_key, trashed_at FROM nodes WHERE id = ?", request.ReplaceNodeID).Scan(&ownerID, &parentID, &kind, &nameKey, &trashed); err != nil {
+		if err := tx.QueryRowContext(ctx, "SELECT owner_id, parent_id, kind, name_key, revision, trashed_at FROM nodes WHERE id = ?", request.ReplaceNodeID).Scan(&ownerID, &parentID, &kind, &nameKey, &revision, &trashed); err != nil {
 			return Upload{}, files.NewError(files.CodeNotFound, op, request.ReplaceNodeID, "replacement target not found")
 		}
 		if ownerID != access.OwnerID || parentID != request.ParentID || kind != "file" || trashed.Valid || nameKey != key {
 			return Upload{}, files.NewError(files.CodeInvalid, op, request.ReplaceNodeID, "replacement target does not match destination and name")
 		}
 		replaceNode = &request.ReplaceNodeID
+		if revision != request.ReplaceRevision {
+			return Upload{}, files.NewError(files.CodeRevisionMismatch, op, request.ReplaceNodeID, "replacement target changed since it was read")
+		}
+		replaceRevision = &request.ReplaceRevision
 	} else {
 		var exists int
 		err := tx.QueryRowContext(ctx, `SELECT 1 WHERE EXISTS (
@@ -202,12 +211,16 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Upload, er
 	if replaceNode != nil {
 		replaceID = *replaceNode
 	}
+	var replaceRevisionValue any
+	if replaceRevision != nil {
+		replaceRevisionValue = *replaceRevision
+	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO uploads
-        (id, actor_id, owner_id, parent_id, name, name_key, expected_bytes, committed_bytes,
-         reserved_bytes, staging_key, conflict_mode, replace_node_id, share_id, state, expires_at, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
+		(id, actor_id, owner_id, parent_id, name, name_key, expected_bytes, committed_bytes,
+		 reserved_bytes, staging_key, conflict_mode, replace_node_id, replace_revision, share_id, state, expires_at, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
 		id, request.ActorID, access.OwnerID, request.ParentID, display, key, request.ExpectedBytes, request.ExpectedBytes,
-		id, string(request.ConflictMode), replaceID, shareID, timeText(expires), timeText(now), timeText(now))
+		id, string(request.ConflictMode), replaceID, replaceRevisionValue, shareID, timeText(expires), timeText(now), timeText(now))
 	if err != nil {
 		return Upload{}, files.WrapError(files.CodeConflict, op, id, err)
 	}
@@ -286,7 +299,7 @@ func (s *Service) Patch(ctx context.Context, request PatchRequest) (Upload, erro
 		return Upload{}, files.NewError(files.CodeInvalidState, op, upload.ID, "upload is not pending")
 	}
 	if err := s.authorizePending(ctx, upload); err != nil {
-		return Upload{}, err
+		return Upload{}, s.handlePendingAuthorizationFailure(ctx, upload, err)
 	}
 	if !s.now().Before(upload.ExpiresAt) {
 		_ = s.expireLocked(ctx, upload)
@@ -349,7 +362,7 @@ func (s *Service) Patch(ctx context.Context, request PatchRequest) (Upload, erro
 	}
 	if newOffset == upload.ExpectedBytes {
 		if err := s.authorizePending(ctx, upload); err != nil {
-			return Upload{}, err
+			return Upload{}, s.handlePendingAuthorizationFailure(ctx, upload, err)
 		}
 		return s.finalizeLocked(ctx, upload.ID)
 	}
@@ -373,7 +386,7 @@ func (s *Service) Complete(ctx context.Context, actorID, uploadID string) (Uploa
 	}
 	if upload.State == StatePending {
 		if err := s.authorizePending(ctx, upload); err != nil {
-			return Upload{}, err
+			return Upload{}, s.handlePendingAuthorizationFailure(ctx, upload, err)
 		}
 	}
 	if upload.State == StatePending {
@@ -407,8 +420,27 @@ func (s *Service) authorizePending(ctx context.Context, upload Upload) error {
 		if replaceAccess.OwnerID != upload.OwnerID || (upload.ShareID != nil && replaceAccess.ShareID != *upload.ShareID) {
 			return files.NewError(files.CodeForbidden, "authorize upload", upload.ID, "replacement target is no longer in the upload share")
 		}
+		if upload.ReplaceRevision == nil {
+			return files.NewError(files.CodeInvalidState, "authorize upload", upload.ID, "replacement revision is missing")
+		}
+		var revision int64
+		if err := s.db.Reader().QueryRowContext(ctx, "SELECT revision FROM nodes WHERE id = ?", *upload.ReplaceNodeID).Scan(&revision); err != nil {
+			return files.WrapError(files.CodeInvalid, "authorize upload", upload.ID, err)
+		}
+		if revision != *upload.ReplaceRevision {
+			return files.NewError(files.CodeRevisionMismatch, "authorize upload", *upload.ReplaceNodeID, "replacement target changed since upload creation")
+		}
 	}
 	return nil
+}
+
+func (s *Service) handlePendingAuthorizationFailure(ctx context.Context, upload Upload, cause error) error {
+	if files.ErrorCodeOf(cause) != files.CodeRevisionMismatch {
+		return cause
+	}
+	releaseErr := s.releaseReservation(ctx, upload, StateFailed, "revision_mismatch")
+	removeErr := s.storage.RemoveStaging(upload.ID)
+	return errors.Join(cause, releaseErr, removeErr)
 }
 
 func equalDigest(left, right []byte) bool {
