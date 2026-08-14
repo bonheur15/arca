@@ -90,6 +90,9 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Upload, er
 	if err != nil {
 		return Upload{}, err
 	}
+	if err := validateFilenamePolicy(ctx, tx, access.OwnerID, display); err != nil {
+		return Upload{}, err
+	}
 	var parentKind string
 	if err := tx.QueryRowContext(ctx, "SELECT kind FROM nodes WHERE id = ?", request.ParentID).Scan(&parentKind); err != nil || parentKind != "folder" {
 		return Upload{}, files.NewError(files.CodeInvalid, op, request.ParentID, "parent is not a folder")
