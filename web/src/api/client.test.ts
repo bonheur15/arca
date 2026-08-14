@@ -1,5 +1,11 @@
-import { describe, expect, it } from "vitest";
-import { parseNode, parseUser } from "./client";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { api, parseNode, parseUser } from "./client";
+
+afterEach(() => vi.restoreAllMocks());
+
+function jsonResponse(value: unknown = {}): Response {
+  return new Response(JSON.stringify(value), { status: 200, headers: { "Content-Type": "application/json" } });
+}
 
 describe("API boundary parsing", () => {
   it("accepts snake_case node responses without trusting absent capabilities", () => {
@@ -39,5 +45,38 @@ describe("API boundary parsing", () => {
     expect(user.role).toBe("superadmin");
     expect(user.quota).toMatchObject({ usedBytes: 1024, quotaBytes: 4096 });
     expect(user.preferences).toEqual({ themeMode: "dark", accent: "teal", density: "compact", reducedMotion: true });
+  });
+
+  it("sends the audited support target when listing a folder", async () => {
+    const request = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({ items: [] }));
+
+    await api.nodes({ parentId: "folder 1", supportUserId: "user-019" });
+
+    expect(request).toHaveBeenCalledOnce();
+    expect(request.mock.calls[0]?.[0]).toBe("/api/v1/nodes?parent_id=folder+1&support_user=user-019&limit=100");
+  });
+
+  it("uses the explicit save-copy payload for shared files", async () => {
+    const request = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse());
+
+    await api.saveCopyNode("source-1", { destinationId: null, name: "Research.pdf", conflictMode: "keep_both" });
+
+    const [, init] = request.mock.calls[0] ?? [];
+    expect(request.mock.calls[0]?.[0]).toBe("/api/v1/nodes/source-1/save-copy");
+    expect(init).toMatchObject({ method: "POST", credentials: "same-origin" });
+    expect(JSON.parse(String(init?.body))).toEqual({ destinationId: null, name: "Research.pdf", conflictMode: "keep_both" });
+    expect(new Headers(init?.headers).get("Idempotency-Key")).toMatch(/^[0-9a-f-]{36}$/i);
+  });
+
+  it("reads explicit CORS origins from instance settings", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({
+      instanceName: "Arca",
+      publicUrl: "https://arca.example.com",
+      allowedCorsOrigins: ["https://app.example.com"],
+    }));
+
+    const settings = await api.settings();
+
+    expect(settings.allowedCorsOrigins).toEqual(["https://app.example.com"]);
   });
 });
