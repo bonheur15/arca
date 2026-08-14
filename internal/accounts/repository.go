@@ -183,15 +183,26 @@ func (r *Repository) UpdateIdentityEmail(ctx context.Context, workosUserID, emai
 // active local authorization record after its immutable identity was deleted
 // would be unsafe. Operators can recover through the local admin command.
 func (r *Repository) SuspendIdentityDeleted(ctx context.Context, workosUserID string) (*User, error) {
-	result, err := r.db.ExecContext(ctx, `
-		UPDATE users SET state = 'suspended', updated_at = ?
-		WHERE workos_user_id = ? AND state <> 'deleted'`,
-		formatTime(r.now().UTC()), workosUserID)
+	now := formatTime(r.now().UTC())
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("accounts: begin deleted identity suspension: %w", err)
+	}
+	defer tx.Rollback()
+	var userID string
+	err = tx.QueryRowContext(ctx, `UPDATE users SET state = 'suspended', updated_at = ?
+		WHERE workos_user_id = ? AND state <> 'deleted' RETURNING id`, now, workosUserID).Scan(&userID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
 	if err != nil {
 		return nil, fmt.Errorf("accounts: suspend deleted identity: %w", err)
 	}
-	if changed, _ := result.RowsAffected(); changed == 0 {
-		return nil, ErrNotFound
+	if err := revokeAccountAccessTx(ctx, tx, userID, now); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
 	}
 	return r.GetUserByWorkOSID(ctx, workosUserID)
 }
@@ -459,7 +470,12 @@ func (r *Repository) SetState(ctx context.Context, userID string, state State, d
 	if deletionDueAt != nil {
 		due = formatTime(deletionDueAt.UTC())
 	}
-	result, err := r.db.ExecContext(ctx, `
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("accounts: begin state update: %w", err)
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `
 		UPDATE users SET state = ?, deletion_due_at = ?, updated_at = ?
 		WHERE id = ? AND state <> 'deleted'
 		  AND NOT (
@@ -474,6 +490,7 @@ func (r *Repository) SetState(ctx context.Context, userID string, state State, d
 		return nil, fmt.Errorf("accounts: update state: %w", err)
 	}
 	if changed, _ := result.RowsAffected(); changed == 0 {
+		_ = tx.Rollback()
 		user, getErr := r.GetUserByID(ctx, userID)
 		if getErr != nil {
 			return nil, getErr
@@ -483,7 +500,33 @@ func (r *Repository) SetState(ctx context.Context, userID string, state State, d
 		}
 		return nil, ErrInvalidTransition
 	}
+	if state == StateSuspended || state == StateDeletionPending || state == StateDeleted {
+		if err := revokeAccountAccessTx(ctx, tx, userID, now); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("accounts: commit state update: %w", err)
+	}
 	return r.GetUserByID(ctx, userID)
+}
+
+func revokeAccountAccessTx(ctx context.Context, tx *sql.Tx, userID, now string) error {
+	statements := []struct {
+		query string
+		args  []any
+	}{
+		{`UPDATE shares SET revoked_at = COALESCE(revoked_at, ?), updated_at = ? WHERE owner_id = ?`, []any{now, now, userID}},
+		{`UPDATE public_shares SET revoked_at = COALESCE(revoked_at, ?) WHERE owner_id = ?`, []any{now, userID}},
+		{`UPDATE api_tokens SET revoked_at = COALESCE(revoked_at, ?) WHERE user_id = ?`, []any{now, userID}},
+		{`UPDATE support_access SET revoked_at = COALESCE(revoked_at, ?) WHERE actor_id = ? OR target_user_id = ?`, []any{now, userID, userID}},
+	}
+	for _, statement := range statements {
+		if _, err := tx.ExecContext(ctx, statement.query, statement.args...); err != nil {
+			return fmt.Errorf("accounts: revoke account access: %w", err)
+		}
+	}
+	return nil
 }
 
 // RestoreUser returns a suspended or deletion-pending account to active use,
