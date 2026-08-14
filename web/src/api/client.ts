@@ -609,6 +609,9 @@ export const api = {
       maxPublicTtlMinutes: numberAt(record, 30, "maxPublicTtlMinutes", "max_public_ttl_minutes"),
       maxPublicRedemptions: numberAt(record, 10, "maxPublicRedemptions", "max_public_redemptions"),
       blockedExtensions: arrayAt(record, "blockedExtensions", "blocked_extensions").filter((item): item is string => typeof item === "string"),
+      allowedMimeGroups: arrayAt(record, "allowedMimeGroups", "allowed_mime_groups").filter((item): item is string => typeof item === "string"),
+      uploadRateBytes: valueAt(record, "uploadRateBytes", "upload_rate_bytes") === null ? null : numberAt(record, 0, "uploadRateBytes", "upload_rate_bytes") || null,
+      downloadRateBytes: valueAt(record, "downloadRateBytes", "download_rate_bytes") === null ? null : numberAt(record, 0, "downloadRateBytes", "download_rate_bytes") || null,
     };
   },
   savePolicy: (userId: string, input: Policy) => apiRequest(`/admin/policies/${userId}`, { method: "PUT", body: input }),
