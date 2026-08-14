@@ -214,6 +214,9 @@ func (l *Limiter) Allow(key string, limit Limit) (bool, time.Duration) {
 	now := l.now()
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if allowed, retry := l.publicExchangeGateLocked(key, now); !allowed {
+		return false, retry
+	}
 	// publicExchangeLimits intentionally checks this instance key after its
 	// IP limits. Keeping the breaker here lets the route retain a single,
 	// uniform 429 response while failure recording stays in the exchange
@@ -230,7 +233,7 @@ func (l *Limiter) Allow(key string, limit Limit) (bool, time.Duration) {
 	// at that same boundary without retaining or inspecting request bodies.
 	if strings.HasPrefix(key, "public-ip-ten:") {
 		prefix := publicIPPrefix(strings.TrimPrefix(key, "public-ip-ten:"))
-		allowed, retry = l.allowLocked("public-prefix-ten:"+prefix, Limit{Capacity: 25, Window: 10 * time.Minute}, now)
+		allowed, retry = l.allowLocked("public-prefix-ten:"+prefix, Limit{Capacity: publicPrefixCapacity, Window: 10 * time.Minute}, now)
 		if !allowed {
 			return false, retry
 		}
@@ -266,7 +269,34 @@ const (
 	publicFailureThreshold = 30
 	publicFailureWindow    = time.Minute
 	publicCircuitDuration  = time.Minute
+	publicPrefixCapacity   = 25
+	publicInstanceCapacity = 100
 )
+
+// publicExchangeGateLocked stops a distributed attacker from allocating a
+// fresh bucket for every source address after a broader gate is already full.
+// This is especially important for the effectively unbounded address space in
+// an IPv6 /64. The route still emits its ordinary generic rate-limit response.
+func (l *Limiter) publicExchangeGateLocked(key string, now time.Time) (bool, time.Duration) {
+	if !strings.HasPrefix(key, "public-ip-minute:") && !strings.HasPrefix(key, "public-ip-ten:") {
+		return true, 0
+	}
+	if now.Before(l.publicCircuitUntil) {
+		return false, l.publicCircuitUntil.Sub(now)
+	}
+	if instance := l.buckets["public-instance"]; instance != nil && now.Before(instance.reset) && instance.count >= publicInstanceCapacity {
+		return false, instance.reset.Sub(now)
+	}
+	separator := strings.IndexByte(key, ':')
+	if separator < 0 || separator == len(key)-1 {
+		return true, 0
+	}
+	prefixKey := "public-prefix-ten:" + publicIPPrefix(key[separator+1:])
+	if prefix := l.buckets[prefixKey]; prefix != nil && now.Before(prefix.reset) && prefix.count >= publicPrefixCapacity {
+		return false, prefix.reset.Sub(now)
+	}
+	return true, 0
+}
 
 // RecordPublicExchangeFailure tracks only failed five-digit code exchanges.
 // No code, body, email, or IP address is accepted or retained by this method.
