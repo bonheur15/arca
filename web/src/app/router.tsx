@@ -1,17 +1,30 @@
 import { QueryClient } from "@tanstack/react-query";
 import { createRootRoute, createRoute, createRouter, Link, Navigate, Outlet } from "@tanstack/react-router";
-import { useEffect, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ApiError, api } from "../api/client";
 import { AppShell } from "../components/AppShell";
 import { ArcaMark } from "../components/ArcaMark";
 import { Button, ErrorState, LoadingState } from "../components/Primitives";
 import { UploadProvider } from "../features/uploads/UploadManager";
-import { FileBrowser } from "../features/files/FileViews";
-import { PublicPage, RedeemPage, RequestAccessPage, SetupPage, SignInPage } from "../pages/AuthPages";
-import { AppearanceSettingsPage, DeveloperSettingsPage, ProfileSettingsPage, SessionsSettingsPage } from "../pages/SettingsPages";
-import { AdminAuditPage, AdminPoliciesPage, AdminRequestsPage, AdminSettingsPage, AdminStoragePage, AdminUsersPage } from "../pages/AdminPages";
 import { useAppearance } from "./appearance";
+
+const FileBrowser = lazy(() => import("../features/files/FileViews").then((module) => ({ default: module.FileBrowser })));
+const SetupPage = lazy(() => import("../pages/AuthPages").then((module) => ({ default: module.SetupPage })));
+const SignInPage = lazy(() => import("../pages/AuthPages").then((module) => ({ default: module.SignInPage })));
+const RequestAccessPage = lazy(() => import("../pages/AuthPages").then((module) => ({ default: module.RequestAccessPage })));
+const RedeemPage = lazy(() => import("../pages/AuthPages").then((module) => ({ default: module.RedeemPage })));
+const PublicPage = lazy(() => import("../pages/AuthPages").then((module) => ({ default: module.PublicPage })));
+const ProfileSettingsPage = lazy(() => import("../pages/SettingsPages").then((module) => ({ default: module.ProfileSettingsPage })));
+const AppearanceSettingsPage = lazy(() => import("../pages/SettingsPages").then((module) => ({ default: module.AppearanceSettingsPage })));
+const SessionsSettingsPage = lazy(() => import("../pages/SettingsPages").then((module) => ({ default: module.SessionsSettingsPage })));
+const DeveloperSettingsPage = lazy(() => import("../pages/SettingsPages").then((module) => ({ default: module.DeveloperSettingsPage })));
+const AdminUsersPage = lazy(() => import("../pages/AdminPages").then((module) => ({ default: module.AdminUsersPage })));
+const AdminRequestsPage = lazy(() => import("../pages/AdminPages").then((module) => ({ default: module.AdminRequestsPage })));
+const AdminStoragePage = lazy(() => import("../pages/AdminPages").then((module) => ({ default: module.AdminStoragePage })));
+const AdminPoliciesPage = lazy(() => import("../pages/AdminPages").then((module) => ({ default: module.AdminPoliciesPage })));
+const AdminAuditPage = lazy(() => import("../pages/AdminPages").then((module) => ({ default: module.AdminAuditPage })));
+const AdminSettingsPage = lazy(() => import("../pages/AdminPages").then((module) => ({ default: module.AdminSettingsPage })));
 
 export const queryClient = new QueryClient({
   defaultOptions: {
@@ -25,7 +38,7 @@ export const queryClient = new QueryClient({
 });
 
 function RootComponent() {
-  return <Outlet />;
+  return <Suspense fallback={<div className="boot-screen"><ArcaMark size={42} /><LoadingState label="Opening Arca…" compact /></div>}><Outlet /></Suspense>;
 }
 
 function ProtectedPage({ children, admin = false }: { children: (user: NonNullable<Awaited<ReturnType<typeof api.session>>["user"]>) => ReactNode; admin?: boolean }) {
@@ -63,13 +76,34 @@ const requestAccessRoute = createRoute({ getParentRoute: () => rootRoute, path: 
 const redeemRoute = createRoute({ getParentRoute: () => rootRoute, path: "/redeem", component: RedeemPage });
 const publicRoute = createRoute({ getParentRoute: () => rootRoute, path: "/public", component: PublicPage });
 
-const filesRoute = createRoute({ getParentRoute: () => rootRoute, path: "/files", validateSearch: (search: Record<string, unknown>) => ({ view: search.view === "grid" ? "grid" as const : "list" as const, sort: typeof search.sort === "string" ? search.sort : "name", order: search.order === "desc" ? "desc" as const : "asc" as const }), component: () => <ProtectedPage>{() => <FileBrowser collection="files" />}</ProtectedPage> });
-const folderRoute = createRoute({ getParentRoute: () => rootRoute, path: "/files/$folderId", validateSearch: filesRoute.options.validateSearch, component: () => { const { folderId } = folderRoute.useParams(); return <ProtectedPage>{() => <FileBrowser collection="files" folderId={folderId} />}</ProtectedPage>; } });
-const recentRoute = createRoute({ getParentRoute: () => rootRoute, path: "/recent", validateSearch: filesRoute.options.validateSearch, component: () => <ProtectedPage>{() => <FileBrowser collection="recent" />}</ProtectedPage> });
-const starredRoute = createRoute({ getParentRoute: () => rootRoute, path: "/starred", validateSearch: filesRoute.options.validateSearch, component: () => <ProtectedPage>{() => <FileBrowser collection="favorites" />}</ProtectedPage> });
-const sharedRoute = createRoute({ getParentRoute: () => rootRoute, path: "/shared", validateSearch: filesRoute.options.validateSearch, component: () => <ProtectedPage>{() => <FileBrowser collection="shared" />}</ProtectedPage> });
-const trashRoute = createRoute({ getParentRoute: () => rootRoute, path: "/trash", validateSearch: filesRoute.options.validateSearch, component: () => <ProtectedPage>{() => <FileBrowser collection="trash" />}</ProtectedPage> });
-const searchRoute = createRoute({ getParentRoute: () => rootRoute, path: "/search", validateSearch: (search: Record<string, unknown>) => ({ q: typeof search.q === "string" ? search.q : "", view: search.view === "grid" ? "grid" as const : "list" as const, sort: typeof search.sort === "string" ? search.sort : "name", order: search.order === "desc" ? "desc" as const : "asc" as const }), component: () => { const { q } = searchRoute.useSearch(); return <ProtectedPage>{() => <FileBrowser collection="search" query={q} />}</ProtectedPage>; } });
+interface FileSearch {
+  view?: "grid" | "list";
+  sort?: string;
+  order?: "asc" | "desc";
+}
+
+function validateFileSearch(search: Record<string, unknown>): FileSearch {
+  return {
+    ...(search.view === "grid" || search.view === "list" ? { view: search.view } : {}),
+    ...(typeof search.sort === "string" ? { sort: search.sort } : {}),
+    ...(search.order === "desc" || search.order === "asc" ? { order: search.order } : {}),
+  };
+}
+
+function validateGlobalSearch(search: Record<string, unknown>): FileSearch & { q?: string } {
+  return {
+    ...validateFileSearch(search),
+    ...(typeof search.q === "string" ? { q: search.q } : {}),
+  };
+}
+
+const filesRoute = createRoute({ getParentRoute: () => rootRoute, path: "/files", validateSearch: validateFileSearch, component: () => <ProtectedPage>{() => <FileBrowser collection="files" />}</ProtectedPage> });
+const folderRoute = createRoute({ getParentRoute: () => rootRoute, path: "/files/$folderId", validateSearch: validateFileSearch, component: () => { const { folderId } = folderRoute.useParams(); return <ProtectedPage>{() => <FileBrowser collection="files" folderId={folderId} />}</ProtectedPage>; } });
+const recentRoute = createRoute({ getParentRoute: () => rootRoute, path: "/recent", validateSearch: validateFileSearch, component: () => <ProtectedPage>{() => <FileBrowser collection="recent" />}</ProtectedPage> });
+const starredRoute = createRoute({ getParentRoute: () => rootRoute, path: "/starred", validateSearch: validateFileSearch, component: () => <ProtectedPage>{() => <FileBrowser collection="favorites" />}</ProtectedPage> });
+const sharedRoute = createRoute({ getParentRoute: () => rootRoute, path: "/shared", validateSearch: validateFileSearch, component: () => <ProtectedPage>{() => <FileBrowser collection="shared" />}</ProtectedPage> });
+const trashRoute = createRoute({ getParentRoute: () => rootRoute, path: "/trash", validateSearch: validateFileSearch, component: () => <ProtectedPage>{() => <FileBrowser collection="trash" />}</ProtectedPage> });
+const searchRoute = createRoute({ getParentRoute: () => rootRoute, path: "/search", validateSearch: validateGlobalSearch, component: () => { const { q } = searchRoute.useSearch(); return <ProtectedPage>{() => <FileBrowser collection="search" query={q ?? ""} />}</ProtectedPage>; } });
 
 const profileRoute = createRoute({ getParentRoute: () => rootRoute, path: "/settings/profile", component: () => <ProtectedPage>{(user) => <ProfileSettingsPage user={user} />}</ProtectedPage> });
 const appearanceRoute = createRoute({ getParentRoute: () => rootRoute, path: "/settings/appearance", component: () => <ProtectedPage>{(user) => <AppearanceSettingsPage user={user} />}</ProtectedPage> });
