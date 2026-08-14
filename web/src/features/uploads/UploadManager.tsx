@@ -3,6 +3,7 @@ import { AlertCircle, Check, ChevronDown, CirclePause, LoaderCircle, Pause, Play
 import { AnimatePresence, motion } from "motion/react";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { UploadItem } from "../../api/types";
+import { api, getCsrfToken } from "../../api/client";
 import { formatBytes } from "../../lib";
 import { Button, IconButton } from "../../components/Primitives";
 
@@ -22,19 +23,23 @@ interface StoredUpload {
 }
 
 interface UploadRecord extends UploadItem {
-  file?: File;
-  location?: string;
+  file?: File | undefined;
+  location?: string | undefined;
   parentId: string | null;
-  controller?: AbortController;
+  controller?: AbortController | undefined;
+  conflictMode?: "fail" | "keep_both" | "replace";
+  replaceNodeId?: string | undefined;
 }
 
 interface UploadContextValue {
   uploads: UploadItem[];
   addFiles: (files: File[], parentId: string | null) => void;
+  addFolderTree: (files: File[], parentId: string | null) => Promise<void>;
   pause: (id: string) => void;
   resume: (id: string) => void;
   cancel: (id: string) => void;
   retry: (id: string) => void;
+  resolveConflict: (id: string, mode: "keep_both" | "replace") => Promise<void>;
   clearFinished: () => void;
 }
 
@@ -99,7 +104,7 @@ function encodeMetadata(value: string): string {
 }
 
 function csrfHeader(): Record<string, string> {
-  const value = document.querySelector<HTMLMetaElement>('meta[name="arca-csrf"]')?.content;
+  const value = getCsrfToken();
   return value ? { "X-CSRF-Token": value } : {};
 }
 
@@ -148,8 +153,9 @@ export function UploadProvider({ children }: { children: ReactNode }) {
       if (!location) {
         const metadata = [
           `filename ${encodeMetadata(upload.name)}`,
-          `parent_id ${encodeMetadata(upload.parentId ?? "")}`,
-          `conflict ${encodeMetadata("fail")}`,
+          ...(upload.parentId ? [`parent_id ${encodeMetadata(upload.parentId)}`] : []),
+          `conflict ${encodeMetadata(upload.conflictMode ?? "fail")}`,
+          ...(upload.replaceNodeId ? [`replace_node_id ${encodeMetadata(upload.replaceNodeId)}`] : []),
         ].join(",");
         const response = await fetch("/api/v1/uploads", {
           method: "POST",
@@ -163,7 +169,11 @@ export function UploadProvider({ children }: { children: ReactNode }) {
             "Idempotency-Key": crypto.randomUUID(),
           },
         });
-        if (!response.ok) throw new Error(response.status === 409 ? "A file with this name already exists." : `Upload could not start (${response.status}).`);
+        if (response.status === 409) {
+          patchRecord(upload.id, { state: "conflict", error: "A file or folder with this name already exists." });
+          return;
+        }
+        if (!response.ok) throw new Error(`Upload could not start (${response.status}).`);
         const returnedLocation = response.headers.get("Location");
         if (!returnedLocation) throw new Error("The server did not return an upload location.");
         location = new URL(returnedLocation, window.location.origin).toString();
@@ -234,9 +244,62 @@ export function UploadProvider({ children }: { children: ReactNode }) {
     setRecords((current) => [...next, ...current]);
   }, []);
 
+  const addFolderTree = useCallback(async (files: File[], parentId: string | null) => {
+    const paths = files.map((file) => ({ file, parts: (file.webkitRelativePath || file.name).split("/").filter(Boolean) }));
+    const directoryPaths = new Set<string>();
+    for (const item of paths) {
+      for (let depth = 1; depth < item.parts.length; depth += 1) directoryPaths.add(item.parts.slice(0, depth).join("/"));
+    }
+    const resolved = new Map<string, string | null>([["", parentId]]);
+    try {
+      for (const directoryPath of [...directoryPaths].sort((left, right) => left.split("/").length - right.split("/").length)) {
+        const parts = directoryPath.split("/");
+        const name = parts.at(-1) ?? "Folder";
+        const parentPath = parts.slice(0, -1).join("/");
+        const directoryParent = resolved.get(parentPath) ?? parentId;
+        try {
+          const folder = await api.createFolder({ parentId: directoryParent, name });
+          resolved.set(directoryPath, folder.id);
+        } catch {
+          const listing = await api.nodes(directoryParent ? { parentId: directoryParent } : {});
+          const existing = listing.items.find((node) => node.kind === "folder" && node.name.localeCompare(name, undefined, { sensitivity: "base" }) === 0);
+          if (!existing) throw new Error(`The folder “${name}” could not be created.`);
+          resolved.set(directoryPath, existing.id);
+        }
+      }
+      const next = paths.map(({ file, parts }): UploadRecord => {
+        const directoryPath = parts.slice(0, -1).join("/");
+        return {
+          id: crypto.randomUUID(),
+          name: parts.at(-1) ?? file.name,
+          size: file.size,
+          offset: 0,
+          progress: 0,
+          state: "queued",
+          file,
+          parentId: resolved.get(directoryPath) ?? parentId,
+        };
+      });
+      setRecords((current) => [...next, ...current]);
+      await queryClient.invalidateQueries({ queryKey: ["nodes"] });
+    } catch (error) {
+      setRecords((current) => [{
+        id: crypto.randomUUID(),
+        name: paths[0]?.parts[0] ?? "Selected folder",
+        size: paths.reduce((total, item) => total + item.file.size, 0),
+        offset: 0,
+        progress: 0,
+        state: "failed",
+        error: error instanceof Error ? error.message : "The folder tree could not be prepared.",
+        parentId,
+      }, ...current]);
+    }
+  }, [queryClient]);
+
   const value = useMemo<UploadContextValue>(() => ({
     uploads: records,
     addFiles,
+    addFolderTree,
     pause: (id) => {
       const upload = recordsRef.current.find((record) => record.id === id);
       upload?.controller?.abort();
@@ -244,6 +307,22 @@ export function UploadProvider({ children }: { children: ReactNode }) {
     },
     resume: (id) => patchRecord(id, { state: "queued", error: undefined }),
     retry: (id) => patchRecord(id, { state: "queued", error: undefined }),
+    resolveConflict: async (id, mode) => {
+      const upload = recordsRef.current.find((record) => record.id === id);
+      if (!upload) return;
+      if (mode === "keep_both") {
+        patchRecord(id, { state: "queued", error: undefined, conflictMode: "keep_both" });
+        return;
+      }
+      try {
+        const listing = await api.nodes(upload.parentId ? { parentId: upload.parentId } : {});
+        const existing = listing.items.find((node) => node.kind === "file" && node.name.localeCompare(upload.name, undefined, { sensitivity: "base" }) === 0);
+        if (!existing) throw new Error("The existing item is a folder and cannot be replaced by a file.");
+        patchRecord(id, { state: "queued", error: undefined, conflictMode: "replace", replaceNodeId: existing.id });
+      } catch (error) {
+        patchRecord(id, { state: "failed", error: error instanceof Error ? error.message : "The existing file could not be replaced." });
+      }
+    },
     cancel: (id) => {
       const upload = recordsRef.current.find((record) => record.id === id);
       upload?.controller?.abort();
@@ -254,7 +333,7 @@ export function UploadProvider({ children }: { children: ReactNode }) {
       void removeStoredUpload(id);
     },
     clearFinished: () => setRecords((current) => current.filter((record) => !["completed", "cancelled"].includes(record.state))),
-  }), [addFiles, patchRecord, records]);
+  }), [addFiles, addFolderTree, patchRecord, records]);
 
   return <UploadContext.Provider value={value}>{children}</UploadContext.Provider>;
 }
@@ -266,7 +345,7 @@ export function useUploads(): UploadContextValue {
 }
 
 export function UploadTray() {
-  const { uploads, pause, resume, retry, cancel, clearFinished } = useUploads();
+  const { uploads, pause, resume, retry, resolveConflict, cancel, clearFinished } = useUploads();
   const [collapsed, setCollapsed] = useState(false);
   if (uploads.length === 0) return null;
   const active = uploads.filter((upload) => ["queued", "uploading", "finalizing", "retrying"].includes(upload.state)).length;
@@ -289,6 +368,7 @@ export function UploadTray() {
                   <div className="upload-item__line"><strong title={upload.name}>{upload.name}</strong><span>{formatBytes(upload.size)}</span></div>
                   <div className="upload-progress"><span style={{ width: `${Math.round(upload.progress * 100)}%` }} /></div>
                   <span className="upload-item__caption">{upload.error ?? (upload.state === "finalizing" ? "Securing in your vault…" : `${Math.round(upload.progress * 100)}%`)}</span>
+                  {upload.state === "conflict" ? <span className="upload-conflict-actions"><button onClick={() => void resolveConflict(upload.id, "keep_both")} type="button">Keep both</button><button onClick={() => void resolveConflict(upload.id, "replace")} type="button">Replace</button></span> : null}
                 </div>
                 {upload.state === "uploading" ? <IconButton label="Pause upload" onClick={() => pause(upload.id)}><Pause size={15} /></IconButton> : null}
                 {upload.state === "paused" ? <IconButton label="Resume upload" onClick={() => resume(upload.id)}><Play size={15} /></IconButton> : null}
