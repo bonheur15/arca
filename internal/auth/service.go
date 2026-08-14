@@ -264,6 +264,31 @@ func (s *AuthService) RevokeSession(ctx context.Context, sessionID, userID strin
 	if err := s.authorizeSessionOwner(ctx, userID, actor.ActorID); err != nil {
 		return err
 	}
+	directory, ok := s.provider.(SessionDirectory)
+	if !ok {
+		return errors.New("auth: identity provider does not support session listing")
+	}
+	user, err := s.accounts.GetUserByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	sessions, err := directory.ListSessions(ctx, user.WorkOSUserID, 100)
+	if err != nil {
+		return err
+	}
+	belongsToUser := false
+	for _, session := range sessions {
+		if session.ID == sessionID && session.UserID == user.WorkOSUserID {
+			belongsToUser = true
+			if expiresAt.Before(session.ExpiresAt) {
+				expiresAt = session.ExpiresAt
+			}
+			break
+		}
+	}
+	if !belongsToUser {
+		return ErrForbidden
+	}
 	if err := s.revokeLocally(ctx, sessionID, userID, expiresAt); err != nil {
 		return err
 	}
