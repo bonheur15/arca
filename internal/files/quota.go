@@ -37,7 +37,8 @@ func (s *Service) ReconcileQuota(ctx context.Context, ownerID string) (QuotaStat
 		return QuotaStatus{}, err
 	}
 	state := "active"
-	if !status.Unlimited && status.ActualUsedBytes+status.ActualReservedBytes > status.QuotaBytes {
+	if !status.Unlimited && (status.ActualUsedBytes > status.QuotaBytes ||
+		status.ActualReservedBytes > status.QuotaBytes-status.ActualUsedBytes) {
 		state = "over_quota"
 	}
 	_, err = tx.ExecContext(ctx, `UPDATE users SET used_bytes = ?, reserved_bytes = ?,
