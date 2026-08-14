@@ -145,7 +145,7 @@ func TestUploadPatchChecksumFinalizeAndCancel(t *testing.T) {
 
 	replacement, err := service.Create(context.Background(), CreateRequest{
 		ActorID: "uploader", ParentID: rootID, Name: "hello.txt", ExpectedBytes: 3,
-		ConflictMode: ConflictReplace, ReplaceNodeID: *upload.NodeID,
+		ConflictMode: ConflictReplace, ReplaceNodeID: *upload.NodeID, ReplaceRevision: 1,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -457,5 +457,46 @@ func TestUploadExpirationAndBlobGarbageCollection(t *testing.T) {
 	}
 	if _, err := storage.OpenBlob(blobKey); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("garbage blob still exists: %v", err)
+	}
+}
+
+func TestReplacementFailsWhenRevisionChanges(t *testing.T) {
+	db, storage, fileService, rootID := uploadTestFixture(t, 100)
+	service := newUploadService(db, storage, nil)
+	original, err := service.Create(context.Background(), CreateRequest{
+		ActorID: "uploader", ParentID: rootID, Name: "original.txt", ExpectedBytes: 3,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	original, err = service.Patch(context.Background(), PatchRequest{
+		ActorID: "uploader", UploadID: original.ID, Offset: 0, ContentLength: 3, Body: bytes.NewReader([]byte("old")),
+	})
+	if err != nil || original.NodeID == nil {
+		t.Fatalf("original upload = %+v, error = %v", original, err)
+	}
+	replacement, err := service.Create(context.Background(), CreateRequest{
+		ActorID: "uploader", ParentID: rootID, Name: "original.txt", ExpectedBytes: 3,
+		ConflictMode: ConflictReplace, ReplaceNodeID: *original.NodeID, ReplaceRevision: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fileService.Rename(context.Background(), "uploader", *original.NodeID, "changed.txt", 1); err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.Patch(context.Background(), PatchRequest{
+		ActorID: "uploader", UploadID: replacement.ID, Offset: 0, ContentLength: 3, Body: bytes.NewReader([]byte("new")),
+	})
+	if files.ErrorCodeOf(err) != files.CodeRevisionMismatch {
+		t.Fatalf("replacement revision error = %v", err)
+	}
+	head, err := service.Head(context.Background(), "uploader", replacement.ID)
+	if err != nil || head.State != StateFailed || head.ErrorCode == nil || *head.ErrorCode != "revision_mismatch" {
+		t.Fatalf("failed replacement = %+v, error = %v", head, err)
+	}
+	var reserved int64
+	if err := db.Reader().QueryRow("SELECT reserved_bytes FROM users WHERE id = 'uploader'").Scan(&reserved); err != nil || reserved != 0 {
+		t.Fatalf("replacement reservation = %d, error = %v", reserved, err)
 	}
 }
