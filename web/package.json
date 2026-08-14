@@ -29,7 +29,8 @@
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "6.0.5",
     "jsdom": "28.0.0",
-    "typescript": "7.0.2",
+    "openapi-typescript": "7.13.0",
+    "typescript": "5.9.3",
     "vite": "8.2.1",
     "vitest": "4.1.10"
   },
