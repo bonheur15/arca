@@ -120,11 +120,16 @@ func (s *Service) finishMetadata(ctx context.Context, upload Upload, blobKey, ch
 	if err == nil {
 		return completed, nil
 	}
-	if files.ErrorCodeOf(err) != files.CodeConflict {
+	code := files.ErrorCodeOf(err)
+	if code != files.CodeConflict && code != files.CodeRevisionMismatch {
 		return Upload{}, err
 	}
 	quarantineErr := s.storage.QuarantineBlob(blobKey)
-	failErr := s.failUpload(ctx, upload, "name_conflict", err)
+	errorCode := "name_conflict"
+	if code == files.CodeRevisionMismatch {
+		errorCode = "revision_mismatch"
+	}
+	failErr := s.failUpload(ctx, upload, errorCode, err)
 	return Upload{}, errors.Join(failErr, quarantineErr)
 }
 
@@ -187,6 +192,9 @@ func (s *Service) commitMetadata(ctx context.Context, upload Upload, blobKey, ch
 	}
 	sequence := int64(1)
 	if current.ReplaceNodeID != nil {
+		if current.ReplaceRevision == nil {
+			return Upload{}, files.NewError(files.CodeInvalidState, "commit upload", current.ID, "replacement revision is missing")
+		}
 		nodeID = *current.ReplaceNodeID
 		if err := tx.QueryRowContext(ctx, "SELECT COALESCE(MAX(sequence), 0) + 1 FROM file_versions WHERE node_id = ?", nodeID).Scan(&sequence); err != nil {
 			return Upload{}, err
@@ -229,13 +237,14 @@ func (s *Service) commitMetadata(ctx context.Context, upload Upload, blobKey, ch
 	}
 	if current.ReplaceNodeID != nil {
 		result, err := tx.ExecContext(ctx, `UPDATE nodes SET current_version_id = ?, size_bytes = ?, mime_type = ?,
-            revision = revision + 1, updated_at = ? WHERE id = ? AND trashed_at IS NULL`, versionID, current.ExpectedBytes, mimeType, now, nodeID)
+			revision = revision + 1, updated_at = ? WHERE id = ? AND revision = ? AND trashed_at IS NULL`,
+			versionID, current.ExpectedBytes, mimeType, now, nodeID, *current.ReplaceRevision)
 		if err != nil {
 			return Upload{}, err
 		}
 		affected, _ := result.RowsAffected()
 		if affected != 1 {
-			return Upload{}, files.NewError(files.CodeConflict, "commit upload", nodeID, "replacement target changed")
+			return Upload{}, files.NewError(files.CodeRevisionMismatch, "commit upload", nodeID, "replacement target changed since upload creation")
 		}
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE users SET reserved_bytes = reserved_bytes - ?, used_bytes = used_bytes + ?, updated_at = ?
@@ -364,13 +373,14 @@ func appendIf(values []error, err error) []error {
 func getUpload(ctx context.Context, q database.Queryer, id string) (Upload, error) {
 	var upload Upload
 	var replaceID, shareID, errorCode, blobKey sql.NullString
+	var replaceRevision sql.NullInt64
 	var expires, created, updated string
 	err := q.QueryRowContext(ctx, `SELECT id, actor_id, owner_id, parent_id, name, expected_bytes,
-        committed_bytes, reserved_bytes, staging_key, intended_blob_key, conflict_mode, replace_node_id,
+		committed_bytes, reserved_bytes, staging_key, intended_blob_key, conflict_mode, replace_node_id, replace_revision,
         share_id, state, error_code, expires_at, created_at, updated_at
         FROM uploads WHERE id = ?`, id).Scan(&upload.ID, &upload.ActorID, &upload.OwnerID, &upload.ParentID,
 		&upload.Name, &upload.ExpectedBytes, &upload.CommittedBytes, &upload.ReservedBytes, &upload.stagingKey,
-		&blobKey, &upload.ConflictMode, &replaceID, &shareID, &upload.State, &errorCode, &expires, &created, &updated)
+		&blobKey, &upload.ConflictMode, &replaceID, &replaceRevision, &shareID, &upload.State, &errorCode, &expires, &created, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Upload{}, files.NewError(files.CodeNotFound, "get upload", id, "upload not found")
 	}
@@ -379,6 +389,9 @@ func getUpload(ctx context.Context, q database.Queryer, id string) (Upload, erro
 	}
 	if replaceID.Valid {
 		upload.ReplaceNodeID = &replaceID.String
+	}
+	if replaceRevision.Valid {
+		upload.ReplaceRevision = &replaceRevision.Int64
 	}
 	if shareID.Valid {
 		upload.ShareID = &shareID.String
