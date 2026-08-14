@@ -122,6 +122,47 @@ func TestWorkOSProviderReconcileUsesExternalID(t *testing.T) {
 	}
 }
 
+func TestWorkOSProviderReconcileAdoptsUnclaimedEmail(t *testing.T) {
+	var updateBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasPrefix(request.URL.Path, "/user_management/users/external_id/"):
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"code":"not_found","message":"missing"}`))
+		case request.URL.Path == "/user_management/users" && request.Method == http.MethodPost:
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(`{"code":"user_exists","message":"already exists"}`))
+		case request.URL.Path == "/user_management/users" && request.Method == http.MethodGet:
+			if request.URL.Query().Get("email") != "alice@example.com" {
+				t.Fatalf("email filter = %q", request.URL.Query().Get("email"))
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data":          []map[string]any{{"id": "user_existing", "email": "alice@example.com", "external_id": nil}},
+				"list_metadata": map[string]any{"after": nil, "before": nil},
+			})
+		case request.URL.Path == "/user_management/users/user_existing" && request.Method == http.MethodPut:
+			if err := json.NewDecoder(request.Body).Decode(&updateBody); err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id": "user_existing", "email": "alice@example.com", "external_id": "arca_123",
+			})
+		default:
+			http.NotFound(w, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+	provider, _ := NewWorkOSProvider("sk_test", "client_test", workos.WithBaseURL(server.URL), workos.WithMaxRetries(0))
+	identity, err := provider.ReconcileUser(context.Background(), accounts.IdentityRequest{ArcaUserID: "arca_123", Email: "alice@example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity.ID != "user_existing" || updateBody["external_id"] != "arca_123" {
+		t.Fatalf("identity = %#v, update body = %#v", identity, updateBody)
+	}
+}
+
 func TestWorkOSProviderListsBoundedEvents(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		if request.URL.Path != "/events" {
