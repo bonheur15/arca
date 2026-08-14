@@ -16,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	_ "modernc.org/sqlite"
 )
 
 type Layout struct {
@@ -171,6 +173,27 @@ func Verify(ctx context.Context, source string) (Manifest, error) {
 	if err := verifyManifestFile(filepath.Join(source, manifest.Database.Path), manifest.Database.Size, manifest.Database.SHA256); err != nil {
 		return Manifest{}, fmt.Errorf("database: %w", err)
 	}
+	databasePath := filepath.Join(source, manifest.Database.Path)
+	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(databasePath)+"?mode=ro&_pragma=foreign_keys(ON)")
+	if err != nil {
+		return Manifest{}, fmt.Errorf("open backup database: %w", err)
+	}
+	defer db.Close()
+	var integrity string
+	if err := db.QueryRowContext(ctx, "PRAGMA integrity_check").Scan(&integrity); err != nil || integrity != "ok" {
+		return Manifest{}, fmt.Errorf("SQLite integrity_check failed: result=%q error=%w", integrity, err)
+	}
+	foreignRows, err := db.QueryContext(ctx, "PRAGMA foreign_key_check")
+	if err != nil {
+		return Manifest{}, fmt.Errorf("SQLite foreign_key_check: %w", err)
+	}
+	if foreignRows.Next() {
+		_ = foreignRows.Close()
+		return Manifest{}, errors.New("SQLite foreign_key_check found violations")
+	}
+	if err := foreignRows.Close(); err != nil {
+		return Manifest{}, err
+	}
 	seen := make(map[string]struct{}, len(manifest.Blobs))
 	for _, blob := range manifest.Blobs {
 		if _, exists := seen[blob.ID]; exists {
@@ -184,6 +207,35 @@ func Verify(ctx context.Context, source string) (Manifest, error) {
 		if err := verifyManifestFile(path, blob.Size, blob.SHA256); err != nil {
 			return Manifest{}, fmt.Errorf("blob %s: %w", blob.ID, err)
 		}
+	}
+	rows, err := db.QueryContext(ctx, `SELECT id, storage_key, size_bytes, sha256 FROM blobs WHERE state = 'ready' AND ref_count > 0 ORDER BY id`)
+	if err != nil {
+		return Manifest{}, fmt.Errorf("enumerate backup blobs: %w", err)
+	}
+	manifestByID := make(map[string]ManifestBlob, len(manifest.Blobs))
+	for _, blob := range manifest.Blobs {
+		manifestByID[blob.ID] = blob
+	}
+	var referenced int
+	for rows.Next() {
+		var id, key, digest string
+		var size int64
+		if err := rows.Scan(&id, &key, &size, &digest); err != nil {
+			_ = rows.Close()
+			return Manifest{}, err
+		}
+		expected, ok := manifestByID[id]
+		if !ok || expected.StorageKey != key || expected.Size != size || !strings.EqualFold(expected.SHA256, digest) {
+			_ = rows.Close()
+			return Manifest{}, fmt.Errorf("manifest does not match referenced blob %s", id)
+		}
+		referenced++
+	}
+	if err := rows.Close(); err != nil {
+		return Manifest{}, err
+	}
+	if referenced != len(manifest.Blobs) {
+		return Manifest{}, errors.New("manifest contains blobs not referenced by its database snapshot")
 	}
 	return manifest, nil
 }
@@ -218,6 +270,21 @@ func Restore(ctx context.Context, source string, destination Layout) (Manifest, 
 		if err := copyVerified(filepath.Join(source, filepath.FromSlash(blob.Path)), filepath.Join(destination.BlobDir, relative), blob.Size, blob.SHA256); err != nil {
 			return Manifest{}, err
 		}
+	}
+	restored, err := sql.Open("sqlite", destination.Database)
+	if err != nil {
+		return Manifest{}, err
+	}
+	if _, err := restored.ExecContext(ctx, `DELETE FROM public_access_sessions;
+		DELETE FROM auth_challenges;
+		DELETE FROM revoked_sessions;
+		DELETE FROM idempotency_keys;
+		UPDATE workos_event_cursor SET cursor = NULL, last_polled_at = NULL, last_error = NULL WHERE singleton = 1;`); err != nil {
+		_ = restored.Close()
+		return Manifest{}, fmt.Errorf("invalidate restored sessions: %w", err)
+	}
+	if err := restored.Close(); err != nil {
+		return Manifest{}, err
 	}
 	return manifest, nil
 }
