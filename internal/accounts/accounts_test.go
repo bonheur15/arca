@@ -3,6 +3,7 @@ package accounts
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -118,6 +119,67 @@ func TestLastActiveSuperadminInvariant(t *testing.T) {
 	}
 	if _, err := repository.SetRole(ctx, second.ID, RoleMember); !errors.Is(err, ErrLastSuperadmin) {
 		t.Fatalf("demote remaining active superadmin error = %v", err)
+	}
+}
+
+func TestSuspensionRevokesSharesPublicCodesTokensAndSupportAccess(t *testing.T) {
+	db := openTestDB(t)
+	repository := NewRepository(db.Writer())
+	now := time.Now().UTC()
+	repository.now = func() time.Time { return now }
+	admin, err := repository.CreateUser(context.Background(), CreateUserParams{Username: "admin-revoke", Email: "admin-revoke@example.com", Role: RoleSuperadmin, State: StateActive, QuotaBytes: 1 << 20, Policy: DefaultPolicy()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	member, err := repository.CreateUser(context.Background(), CreateUserParams{Username: "member-revoke", Email: "member-revoke@example.com", Role: RoleMember, State: StateActive, QuotaBytes: 1 << 20, Policy: DefaultPolicy()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootID := "0198a000-0000-7000-8000-00000000aa01"
+	nodeID := "0198a000-0000-7000-8000-00000000aa02"
+	stamp := now.Format(time.RFC3339Nano)
+	if _, err := db.Writer().Exec(`INSERT INTO nodes(id, owner_id, parent_id, kind, name, name_key, created_by, created_at, updated_at) VALUES
+		(?, ?, NULL, 'folder', '', '', ?, ?, ?),
+		(?, ?, ?, 'folder', 'Shared', 'shared', ?, ?, ?)`, rootID, member.ID, member.ID, stamp, stamp, nodeID, member.ID, rootID, member.ID, stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Writer().Exec(`UPDATE users SET root_node_id = ? WHERE id = ?`, rootID, member.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Writer().Exec(`INSERT INTO shares(id, owner_id, permission, created_at, updated_at) VALUES('share-revoke', ?, 'viewer', ?, ?)`, member.ID, stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Writer().Exec(`INSERT INTO public_shares(id, owner_id, code_hash, expires_at, redemption_limit, created_at) VALUES('public-revoke', ?, x'01', ?, 3, ?)`, member.ID, now.Add(time.Hour).Format(time.RFC3339Nano), stamp); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Writer().Exec(`INSERT INTO api_tokens(id, user_id, name, token_prefix, token_hash, scopes, created_at) VALUES('token-revoke', ?, 'test', 'arca_pat_fixture', x'02', '["files:read"]', ?)`, member.ID, stamp); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Writer().Exec(`INSERT INTO support_access(id, actor_id, target_user_id, reason, expires_at, created_at) VALUES('support-revoke', ?, ?, 'Investigating member files', ?, ?)`, admin.ID, member.ID, now.Add(time.Hour).Format(time.RFC3339Nano), stamp); err != nil {
+		t.Fatal(err)
+	}
+
+	service := NewService(repository, &fakeIdentityProvider{}, nil, audit.NopRecorder{})
+	if _, err := service.SuspendUser(context.Background(), member.ID, MutationContext{ActorID: admin.ID}); err != nil {
+		t.Fatal(err)
+	}
+	checks := []struct {
+		query string
+		args  []any
+	}{
+		{`SELECT revoked_at FROM shares WHERE id = 'share-revoke'`, nil},
+		{`SELECT revoked_at FROM public_shares WHERE id = 'public-revoke'`, nil},
+		{`SELECT revoked_at FROM api_tokens WHERE id = 'token-revoke'`, nil},
+		{`SELECT revoked_at FROM support_access WHERE id = 'support-revoke'`, nil},
+	}
+	for _, check := range checks {
+		var revoked sql.NullString
+		if err := db.Reader().QueryRow(check.query, check.args...).Scan(&revoked); err != nil {
+			t.Fatal(err)
+		}
+		if !revoked.Valid {
+			t.Fatalf("revocation was not applied by %q", check.query)
+		}
 	}
 }
 
