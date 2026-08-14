@@ -17,7 +17,16 @@ var (
 	ErrInvalidTransition  = errors.New("accounts: invalid state transition")
 	ErrRequestDecided     = errors.New("accounts: access request has already been decided")
 	ErrInvalidStatusToken = errors.New("accounts: invalid status token")
+	ErrAuditFailed        = errors.New("accounts: mutation committed but audit recording failed")
 )
+
+// CommittedAuditError means the domain mutation is durable but its audit
+// append failed. Transports should surface this as an operational error and
+// must not blindly retry a non-idempotent mutation.
+type CommittedAuditError struct{ Err error }
+
+func (e *CommittedAuditError) Error() string { return ErrAuditFailed.Error() + ": " + e.Err.Error() }
+func (e *CommittedAuditError) Unwrap() error { return errors.Join(ErrAuditFailed, e.Err) }
 
 type Role string
 
@@ -75,6 +84,11 @@ type Preferences struct {
 	Accent        string    `json:"accent"`
 	Density       Density   `json:"density"`
 	ReducedMotion bool      `json:"reduced_motion"`
+}
+
+type ProfileUpdate struct {
+	Username    *string `json:"username,omitempty"`
+	DisplayName *string `json:"display_name,omitempty"`
 }
 
 func DefaultPreferences() Preferences {
