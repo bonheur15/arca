@@ -265,12 +265,18 @@ func (s *Server) publicExchange(w http.ResponseWriter, r *http.Request) {
 		Code string `json:"code"`
 	}
 	if err := decodeBody(w, r, &body); err != nil {
-		s.genericPublicFailure(w, r)
+		s.publicExchangeFailure(w, r)
 		return
 	}
 	session, err := s.runtime.Shares.Redeem(r.Context(), body.Code)
 	if err != nil {
-		s.genericPublicFailure(w, r)
+		if errors.Is(err, shares.ErrPublicUnavailable) {
+			s.publicExchangeFailure(w, r)
+		} else {
+			// Preserve the same public response for operational errors without
+			// treating an internal outage as a brute-force signal.
+			s.genericPublicFailure(w, r)
+		}
 		return
 	}
 	secure := s.cookiePolicy().Secure
@@ -281,6 +287,13 @@ func (s *Server) publicExchange(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{Name: name, Value: session.Token, Path: "/", Expires: session.ExpiresAt, MaxAge: int(time.Until(session.ExpiresAt).Seconds()), HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode})
 	w.Header().Set("Cache-Control", "no-store")
 	WriteJSON(w, http.StatusOK, map[string]any{"redeemed": true, "expires_at": session.ExpiresAt})
+}
+
+func (s *Server) publicExchangeFailure(w http.ResponseWriter, r *http.Request) {
+	if s.limiter != nil {
+		s.limiter.RecordPublicExchangeFailure()
+	}
+	s.genericPublicFailure(w, r)
 }
 
 func (s *Server) genericPublicFailure(w http.ResponseWriter, r *http.Request) {
