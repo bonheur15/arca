@@ -51,6 +51,9 @@ func NewServer(runtime *app.Runtime, webAssets, apiAssets fs.FS, logger *slog.Lo
 	if err != nil {
 		return nil, err
 	}
+	if _, err := ParseOrigins(runtime.Config.File.AllowedCORSOrigins); err != nil {
+		return nil, err
+	}
 	webRoot, err := fs.Sub(webAssets, "dist")
 	if err != nil {
 		return nil, fmt.Errorf("open embedded web distribution: %w", err)
@@ -73,6 +76,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.router.Se
 func (s *Server) routes() chi.Router {
 	router := chi.NewRouter()
 	router.Use(RequestIDs)
+	cors, _ := CORS(s.runtime.Config.File.AllowedCORSOrigins)
+	router.Use(cors)
 	router.Use(Recoverer(s.logger))
 	router.Use(SecurityHeaders(s.runtime.Config.TLSCert != ""))
 	router.Use(AccessLog(s.logger))
@@ -110,10 +115,13 @@ func (s *Server) routes() chi.Router {
 
 			private.Get("/nodes", s.listNodes)
 			private.Get("/nodes/{nodeID}", s.getNode)
+			private.With(s.idempotent).Post("/nodes/bulk", s.bulkNodes)
+			private.Post("/nodes/archive", s.archiveNodes)
 			private.Post("/folders", s.createFolder)
 			private.Patch("/nodes/{nodeID}", s.renameNode)
 			private.With(s.idempotent).Post("/nodes/{nodeID}/move", s.moveNode)
 			private.With(s.idempotent).Post("/nodes/{nodeID}/copy", s.copyNode)
+			private.With(s.idempotent).Post("/nodes/{nodeID}/save-copy", s.saveNodeCopy)
 			private.With(s.idempotent).Post("/nodes/{nodeID}/trash", s.trashNode)
 			private.With(s.idempotent).Post("/nodes/{nodeID}/restore", s.restoreNode)
 			private.With(s.idempotent).Post("/nodes/{nodeID}/purge", s.purgeNode)
@@ -433,7 +441,8 @@ func (s *Server) handleError(w http.ResponseWriter, r *http.Request, err error) 
 			files.CodeItemLimit: http.StatusConflict, files.CodeQuota: http.StatusInsufficientStorage,
 			files.CodeDiskFull: http.StatusInsufficientStorage, files.CodeUploadLimit: http.StatusTooManyRequests,
 			files.CodeOffsetMismatch: http.StatusConflict, files.CodeChecksumMismatch: http.StatusBadRequest,
-			files.CodeExpired: http.StatusGone, files.CodeInvalidState: http.StatusConflict,
+			files.CodeFileTypeBlocked: http.StatusUnsupportedMediaType,
+			files.CodeExpired:         http.StatusGone, files.CodeInvalidState: http.StatusConflict,
 		}[domain.Code]
 		if status == 0 {
 			status = http.StatusBadRequest
