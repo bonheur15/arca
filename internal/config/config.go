@@ -28,6 +28,7 @@ type FileConfig struct {
 	WorkOSClientID         string   `json:"workos_client_id"`
 	FilesystemReserveBytes int64    `json:"filesystem_reserve_bytes"`
 	TrustedProxyCIDRs      []string `json:"trusted_proxy_cidrs,omitempty"`
+	AllowedCORSOrigins     []string `json:"allowed_cors_origins,omitempty"`
 }
 
 type Secrets struct {
