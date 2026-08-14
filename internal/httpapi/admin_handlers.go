@@ -257,7 +257,10 @@ type policyBody struct {
 	MaxActivePublicShares int      `json:"maxActivePublicShares"`
 	MaxPublicTTLMinutes   int      `json:"maxPublicTtlMinutes"`
 	MaxPublicRedemptions  int      `json:"maxPublicRedemptions"`
+	AllowedMIMEGroups     []string `json:"allowedMimeGroups"`
 	BlockedExtensions     []string `json:"blockedExtensions"`
+	UploadRateBytes       *int64   `json:"uploadRateBytes"`
+	DownloadRateBytes     *int64   `json:"downloadRateBytes"`
 }
 
 func (s *Server) adminPolicy(w http.ResponseWriter, r *http.Request) {
@@ -298,7 +301,10 @@ func (s *Server) adminSavePolicy(w http.ResponseWriter, r *http.Request) {
 	policy.MaxActivePublicShares = body.MaxActivePublicShares
 	policy.MaxPublicTTLMinutes = body.MaxPublicTTLMinutes
 	policy.MaxPublicRedemptions = body.MaxPublicRedemptions
+	policy.AllowedMIMEGroups = body.AllowedMIMEGroups
 	policy.BlockedExtensions = body.BlockedExtensions
+	policy.UploadRateBytes = body.UploadRateBytes
+	policy.DownloadRateBytes = body.DownloadRateBytes
 	user, err := s.runtime.Accounts.UpdatePolicyAndQuota(r.Context(), userID, body.QuotaBytes, body.Unlimited, policy, mutation(r, s.remoteIP(r)))
 	if err != nil {
 		s.handleError(w, r, err)
@@ -312,7 +318,8 @@ func policyResponse(user *accounts.User, policy accounts.Policy) map[string]any 
 		"maxItems": policy.MaxItems, "allowInternalSharing": policy.AllowInternalSharing, "allowPublicSharing": policy.AllowPublicSharing,
 		"allowApiTokens": policy.AllowAPITokens, "maxConcurrentUploads": policy.MaxConcurrentUploads, "maxPendingUploads": policy.MaxPendingUploads,
 		"maxActivePublicShares": policy.MaxActivePublicShares, "maxPublicTtlMinutes": policy.MaxPublicTTLMinutes,
-		"maxPublicRedemptions": policy.MaxPublicRedemptions, "blockedExtensions": policy.BlockedExtensions}
+		"maxPublicRedemptions": policy.MaxPublicRedemptions, "allowedMimeGroups": policy.AllowedMIMEGroups,
+		"blockedExtensions": policy.BlockedExtensions, "uploadRateBytes": policy.UploadRateBytes, "downloadRateBytes": policy.DownloadRateBytes}
 }
 
 func (s *Server) adminStorage(w http.ResponseWriter, r *http.Request) {
