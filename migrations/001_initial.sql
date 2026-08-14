@@ -287,6 +287,14 @@ CREATE TABLE jobs (
 );
 CREATE INDEX jobs_ready_idx ON jobs(state, run_after, lease_until);
 
+CREATE TABLE operation_leases (
+    name TEXT PRIMARY KEY,
+    lease_until TEXT NOT NULL,
+    owner TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE audit_events (
     id TEXT PRIMARY KEY,
     actor_id TEXT REFERENCES users(id),
