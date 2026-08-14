@@ -138,6 +138,10 @@ func (s *TokenService) Create(ctx context.Context, userID, name string, scopes [
 		Scopes: normalizedScopes, ExpiresAt: expiresAt, CreatedAt: now,
 	}
 	if err := s.record(ctx, mutation, "api_token.created", token.ID, map[string]any{"scopes": normalizedScopes}); err != nil {
+		// The plaintext has not been returned yet. Remove the newly-created
+		// token so an audit failure cannot leave an active credential that no
+		// one can subsequently identify or revoke.
+		_, _ = s.db.ExecContext(ctx, `DELETE FROM api_tokens WHERE id = ?`, token.ID)
 		return nil, err
 	}
 	return &CreatedPersonalAccessToken{PersonalAccessToken: token, Token: plain}, nil
