@@ -62,7 +62,7 @@ func NewLocalStorage(dataDir string) (*LocalStorage, error) {
 }
 
 func opaqueKey(value string) error {
-	if value == "" || filepath.Base(value) != value || strings.ContainsAny(value, `/\\\x00`) {
+	if value == "" || filepath.Base(value) != value || strings.ContainsAny(value, "/\\\x00") {
 		return errors.New("invalid opaque storage key")
 	}
 	return nil
@@ -90,7 +90,23 @@ func (s *LocalStorage) OpenStaging(id string) (StagingFile, error) {
 	if err != nil {
 		return nil, err
 	}
-	return openNoFollow(path, unix.O_CREAT|unix.O_WRONLY|unix.O_APPEND, 0o600)
+	_, statErr := os.Lstat(path)
+	created := errors.Is(statErr, os.ErrNotExist)
+	if statErr != nil && !created {
+		return nil, statErr
+	}
+	file, err := openNoFollow(path, unix.O_CREAT|unix.O_WRONLY|unix.O_APPEND, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if created {
+		if err := syncDirectory(s.staging); err != nil {
+			_ = file.Close()
+			_ = os.Remove(path)
+			return nil, err
+		}
+	}
+	return file, nil
 }
 
 func (s *LocalStorage) OpenStagingRead(id string) (io.ReadCloser, error) {
@@ -129,6 +145,9 @@ func (s *LocalStorage) TruncateStaging(id string, size int64) error {
 		return err
 	}
 	truncateErr := file.Truncate(size)
+	if truncateErr == nil {
+		truncateErr = file.Sync()
+	}
 	closeErr := file.Close()
 	return errors.Join(truncateErr, closeErr)
 }
@@ -142,7 +161,10 @@ func (s *LocalStorage) RemoveStaging(id string) error {
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	return syncDirectory(s.staging)
 }
 
 func (s *LocalStorage) Finalize(id, key string) error {
@@ -165,7 +187,12 @@ func (s *LocalStorage) Finalize(id, key string) error {
 	if err := os.Rename(source, destination); err != nil {
 		return err
 	}
-	return syncDirectory(filepath.Dir(destination))
+	return errors.Join(
+		syncDirectory(filepath.Dir(destination)),
+		syncDirectory(filepath.Dir(filepath.Dir(destination))),
+		syncDirectory(s.blobs),
+		syncDirectory(s.staging),
+	)
 }
 
 func (s *LocalStorage) OpenBlob(key string) (io.ReadCloser, error) {
@@ -192,7 +219,10 @@ func (s *LocalStorage) RemoveBlob(key string) error {
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	return syncDirectory(filepath.Dir(path))
 }
 
 func (s *LocalStorage) QuarantineBlob(key string) error {
@@ -201,10 +231,21 @@ func (s *LocalStorage) QuarantineBlob(key string) error {
 		return err
 	}
 	destination := filepath.Join(s.quarantine, key)
+	for suffix := 0; ; suffix++ {
+		if _, err := os.Lstat(destination); errors.Is(err, os.ErrNotExist) {
+			break
+		} else if err != nil {
+			return err
+		}
+		if suffix >= 1000 {
+			return fmt.Errorf("too many quarantined copies of blob %q", key)
+		}
+		destination = filepath.Join(s.quarantine, fmt.Sprintf("%s.%d", key, suffix+1))
+	}
 	if err := os.Rename(path, destination); err != nil {
 		return err
 	}
-	return syncDirectory(s.quarantine)
+	return errors.Join(syncDirectory(s.quarantine), syncDirectory(filepath.Dir(path)))
 }
 
 // BlobPath resolves an opaque database storage key to its local blob path. It
@@ -232,6 +273,10 @@ func (s *LocalStorage) ListBlobKeys() ([]string, error) {
 		key := entry.Name()
 		if err := opaqueKey(key); err != nil {
 			return fmt.Errorf("invalid blob entry %q: %w", path, err)
+		}
+		expected, err := s.blobPath(key)
+		if err != nil || filepath.Clean(expected) != filepath.Clean(path) {
+			return fmt.Errorf("blob %q is outside its expected shard", path)
 		}
 		keys = append(keys, key)
 		return nil
