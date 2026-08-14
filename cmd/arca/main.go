@@ -19,6 +19,7 @@ import (
 
 	"arca/api"
 	"arca/internal/app"
+	"arca/internal/audit"
 	"arca/internal/backup"
 	"arca/internal/config"
 	"arca/internal/httpapi"
@@ -241,6 +242,11 @@ func createBackup(arguments []string, stdout, stderr io.Writer) error {
 	manifest, err := runtime.Backup.Create(ctx, *output)
 	if err != nil {
 		return err
+	}
+	if err := runtime.Audit.Record(ctx, audit.Event{Action: "backup.created", TargetType: "backup", Metadata: map[string]any{
+		"schema_version": manifest.SchemaVersion, "blob_count": len(manifest.Blobs), "total_bytes": manifest.TotalBytes,
+	}}); err != nil {
+		return fmt.Errorf("backup completed but audit failed: %w", err)
 	}
 	fmt.Fprintf(stdout, "Backup complete: %s\n%d blobs, %d bytes, schema %d\n", *output, len(manifest.Blobs), manifest.TotalBytes, manifest.SchemaVersion)
 	return nil
