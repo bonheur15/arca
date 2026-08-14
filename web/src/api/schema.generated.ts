@@ -870,6 +870,7 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
+        /** @description Account deletion requires action=delete and an explicit deletionMode of transfer or purge. Transfer also requires transferToUserId. Deletion suspends access immediately, remains recoverable for seven days, then completes asynchronously. */
         patch: operations["adminUpdateUser"];
         trace?: never;
     };
@@ -1034,12 +1035,35 @@ export interface components {
             state: "provisioning" | "active" | "suspended" | "over_quota" | "deletion_pending" | "deleted";
             /** Format: int64 */
             quota_bytes: number;
-            quota_unlimited?: boolean;
+            quota_unlimited: boolean;
             /** Format: int64 */
             used_bytes: number;
             /** Format: int64 */
             reserved_bytes: number;
-            preferences?: components["schemas"]["Preferences"];
+            /** Format: uuid */
+            root_node_id?: string;
+            /** Format: date-time */
+            deletion_due_at?: string | null;
+            /** Format: date-time */
+            last_sign_in_at?: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            preferences: components["schemas"]["Preferences"];
+        };
+        AdminUserUpdate: {
+            /** @enum {string} */
+            action?: "suspend" | "activate" | "restore" | "delete";
+            /** @enum {string} */
+            role?: "superadmin" | "member";
+            /** Format: int64 */
+            quotaBytes?: number;
+            quotaUnlimited?: boolean;
+            /** @enum {string} */
+            deletionMode?: "transfer" | "purge";
+            /** Format: uuid */
+            transferToUserId?: string;
         };
         Preferences: {
             /** @enum {string} */
@@ -1157,7 +1181,12 @@ export interface components {
             max_active_public_shares?: number;
             max_public_ttl_minutes?: number;
             max_public_redemptions?: number;
+            allowed_mime_groups?: string[];
             blocked_extensions?: string[];
+            /** Format: int64 */
+            upload_rate_bytes?: number | null;
+            /** Format: int64 */
+            download_rate_bytes?: number | null;
         };
         Session: {
             authenticated: boolean;
@@ -2352,15 +2381,17 @@ export interface operations {
     adminUpdateUser: {
         parameters: {
             query?: never;
-            header: {
-                "If-Match": components["parameters"]["IfMatch"];
-            };
+            header?: never;
             path: {
                 userId: string;
             };
             cookie?: never;
         };
-        requestBody: components["requestBodies"]["JSON"];
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminUserUpdate"];
+            };
+        };
         responses: {
             200: components["responses"]["User"];
             default: components["responses"]["Problem"];
