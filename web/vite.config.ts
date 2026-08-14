@@ -1,7 +1,11 @@
 import { defineConfig } from "vitest/config";
+import { loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 
-export default defineConfig({
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, ".", "");
+  const apiTarget = env.ARCA_API_TARGET || "http://127.0.0.1:8080";
+  return {
   plugins: [react()],
   build: {
     outDir: "dist",
@@ -23,8 +27,8 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      "/api": "http://127.0.0.1:8080",
-      "/health": "http://127.0.0.1:8080",
+      "/api": apiTarget,
+      "/health": apiTarget,
     },
   },
   test: {
@@ -32,4 +36,5 @@ export default defineConfig({
     setupFiles: "./src/test/setup.ts",
     css: true,
   },
+  };
 });
