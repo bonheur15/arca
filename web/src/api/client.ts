@@ -9,6 +9,7 @@ import type {
   InstanceSettings,
   Job,
   NodePage,
+  Notification,
   Policy,
   PublicBundle,
   PublicShare,
@@ -499,6 +500,18 @@ export const api = {
     });
   },
   revokeToken: (id: string) => apiRequest(`/tokens/${id}`, { method: "DELETE" }),
+  async notifications(): Promise<Notification[]> {
+    return parseList(await apiRequest("/notifications"), (entry) => {
+      const record = object(entry);
+      return {
+        id: stringAt(record, "", "id"),
+        kind: stringAt(record, "activity", "kind"),
+        payload: object(valueAt(record, "payload")),
+        readAt: nullableStringAt(record, "readAt", "read_at"),
+        createdAt: stringAt(record, "", "createdAt", "created_at"),
+      };
+    });
+  },
 
   async adminUsers(): Promise<User[]> { return parseList(await apiRequest("/admin/users"), parseUser); },
   createUser: async (input: JsonRecord) => parseUser(unwrap(await apiRequest("/admin/users", { method: "POST", body: input }))),
