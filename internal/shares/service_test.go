@@ -74,6 +74,27 @@ func TestInternalPermissionInheritance(t *testing.T) {
 	}
 }
 
+func TestInternalSharingRespectsOwnerPolicy(t *testing.T) {
+	db := testDB(t)
+	now := time.Date(2026, 8, 14, 1, 0, 0, 0, time.UTC)
+	owner, root, _ := seedOwnerAndTree(t, db, now)
+	recipient := "0198a000-0000-7000-8000-000000000014"
+	seedUser(t, db, recipient, "blocked-receiver", "blocked@example.com", now)
+	if _, err := db.Exec(`UPDATE user_policies SET allow_internal_sharing = 0 WHERE user_id = ?`, owner); err != nil {
+		t.Fatal(err)
+	}
+	service, err := New(db, []byte("01234567890123456789012345678901"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.CreateInternal(context.Background(), CreateInternalInput{
+		OwnerID: owner, RootIDs: []string{root}, RecipientIDs: []string{recipient}, Permission: PermissionViewer,
+	})
+	if !is(err, ErrForbidden) {
+		t.Fatalf("internal share policy error = %v", err)
+	}
+}
+
 func testDB(t *testing.T) *sql.DB {
 	t.Helper()
 	opened, err := database.Open(context.Background(), database.Config{Path: filepath.Join(t.TempDir(), "arca.sqlite3"), Migrations: migrations.Files})
