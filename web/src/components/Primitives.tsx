@@ -51,7 +51,7 @@ export function Modal({
             <Dialog.Overlay asChild forceMount>
               <motion.div className="modal-overlay" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} />
             </Dialog.Overlay>
-            <Dialog.Content asChild forceMount aria-describedby={description ? undefined : undefined}>
+            <Dialog.Content asChild forceMount>
               <motion.div
                 className={`modal ${wide ? "modal--wide" : ""}`}
                 initial={{ opacity: 0, y: 14, scale: 0.98 }}
@@ -62,7 +62,7 @@ export function Modal({
                 <div className="modal__header">
                   <div>
                     <Dialog.Title>{title}</Dialog.Title>
-                    {description ? <Dialog.Description>{description}</Dialog.Description> : null}
+                    <Dialog.Description className={description ? undefined : "sr-only"}>{description ?? `${title} dialog`}</Dialog.Description>
                   </div>
                   <Dialog.Close asChild><IconButton label="Close dialog"><X size={18} /></IconButton></Dialog.Close>
                 </div>
