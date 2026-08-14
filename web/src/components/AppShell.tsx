@@ -2,6 +2,7 @@ import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import {
   Archive,
+  Bell,
   Clock3,
   Cloud,
   Code2,
@@ -26,12 +27,12 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api } from "../api/client";
 import type { User } from "../api/types";
-import { formatBytes, initials } from "../lib";
+import { formatBytes, formatRelativeDate, initials } from "../lib";
 import { useUploads, UploadTray } from "../features/uploads/UploadManager";
 import { ArcaMark } from "./ArcaMark";
 import { Button, IconButton, Modal } from "./Primitives";
@@ -102,6 +103,29 @@ function UserMenu({ user }: { user: User }) {
           <DropdownMenu.Item className="dropdown__item dropdown__item--danger" disabled={logout.isPending} onSelect={() => logout.mutate()}>
             <LogOut size={16} />Sign out
           </DropdownMenu.Item>
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+    </DropdownMenu.Root>
+  );
+}
+
+function NotificationsMenu() {
+  const notifications = useQuery({ queryKey: ["notifications"], queryFn: api.notifications, refetchInterval: 60_000 });
+  const unread = notifications.data?.filter((item) => !item.readAt).length ?? 0;
+  return (
+    <DropdownMenu.Root>
+      <DropdownMenu.Trigger asChild>
+        <button aria-label={unread ? `${unread} unread notifications` : "Notifications"} className="notification-trigger" type="button"><Bell size={18} />{unread ? <span>{Math.min(unread, 9)}</span> : null}</button>
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Portal>
+        <DropdownMenu.Content align="end" className="dropdown notification-menu" sideOffset={8}>
+          <div className="notification-menu__head"><strong>Notifications</strong><span>{unread ? `${unread} unread` : "All caught up"}</span></div>
+          <DropdownMenu.Separator className="dropdown__separator" />
+          {notifications.isPending ? <div className="notification-empty">Checking activity…</div> : notifications.data?.length ? notifications.data.slice(0, 6).map((item) => {
+            const title = typeof item.payload.title === "string" ? item.payload.title : item.kind.replaceAll("_", " ");
+            const detail = typeof item.payload.message === "string" ? item.payload.message : "Activity recorded in your vault.";
+            return <div className={`notification-item ${item.readAt ? "" : "notification-item--unread"}`} key={item.id}><span /><div><strong>{title}</strong><p>{detail}</p><small>{formatRelativeDate(item.createdAt)}</small></div></div>;
+          }) : <div className="notification-empty">Nothing new right now.</div>}
         </DropdownMenu.Content>
       </DropdownMenu.Portal>
     </DropdownMenu.Root>
@@ -182,6 +206,7 @@ export function AppShell({ user, children }: { user: User; children: ReactNode }
     source.addEventListener("share", refreshShares);
     source.addEventListener("job", refreshJobs);
     source.addEventListener("revocation", refreshSession);
+    source.addEventListener("notification", () => { void queryClient.invalidateQueries({ queryKey: ["notifications"] }); });
     return () => source.close();
   }, [queryClient]);
 
@@ -244,6 +269,7 @@ export function AppShell({ user, children }: { user: User; children: ReactNode }
             <kbd>/</kbd>
           </form>
           <button className="command-trigger" onClick={() => setCommandOpen(true)} type="button"><Sparkles size={16} /><span>Commands</span><kbd>⌘K</kbd></button>
+          <NotificationsMenu />
           <span className="topbar-avatar"><span className="avatar avatar--small">{initials(user.displayName || user.username)}</span></span>
         </header>
         {user.state === "over_quota" ? <div className="system-banner"><Cloud size={17} /><span>Your storage is over quota. Downloads and cleanup remain available, but new uploads are paused.</span></div> : null}
