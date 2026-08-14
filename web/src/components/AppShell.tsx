@@ -34,6 +34,7 @@ import { api } from "../api/client";
 import type { User } from "../api/types";
 import { formatBytes, formatRelativeDate, initials } from "../lib";
 import { useUploads, UploadTray } from "../features/uploads/UploadManager";
+import { supportSearch, supportUserFromLocation } from "../features/files/supportMode";
 import { ArcaMark } from "./ArcaMark";
 import { Button, IconButton, Modal } from "./Primitives";
 
@@ -60,14 +61,17 @@ const adminNav: NavItem[] = [
   { label: "Instance", to: "/admin/settings", icon: Gauge },
 ];
 
-function NavLink({ item, onNavigate }: { item: NavItem; onNavigate?: () => void }) {
+function NavLink({ item, onNavigate, supportUserId }: { item: NavItem; onNavigate?: () => void; supportUserId?: string | null }) {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const active = pathname === item.to || (item.to === "/files" && pathname.startsWith("/files/"));
   const Icon = item.icon;
+  const contents = <><Icon size={18} strokeWidth={active ? 2.2 : 1.8} /><span>{item.label}</span></>;
+  if (item.to === "/files" && supportUserId) {
+    return <Link aria-current={active ? "page" : undefined} className={`nav-link ${active ? "nav-link--active" : ""}`} onClick={onNavigate} search={supportSearch(supportUserId)} to="/files">{contents}</Link>;
+  }
   return (
     <Link aria-current={active ? "page" : undefined} className={`nav-link ${active ? "nav-link--active" : ""}`} onClick={onNavigate} to={item.to}>
-      <Icon size={18} strokeWidth={active ? 2.2 : 1.8} />
-      <span>{item.label}</span>
+      {contents}
     </Link>
   );
 }
@@ -132,7 +136,7 @@ function NotificationsMenu() {
   );
 }
 
-function CommandPalette({ open, onOpenChange, user }: { open: boolean; onOpenChange: (open: boolean) => void; user: User }) {
+function CommandPalette({ open, onOpenChange, user, supportUserId }: { open: boolean; onOpenChange: (open: boolean) => void; user: User; supportUserId?: string | null }) {
   const navigate = useNavigate();
   const commands = useMemo(() => [
     ...personalNav,
@@ -148,7 +152,7 @@ function CommandPalette({ open, onOpenChange, user }: { open: boolean; onOpenCha
       <div className="command-list">
         {matches.map((command) => {
           const Icon = command.icon;
-          return <button key={command.to} onClick={() => { void navigate({ to: command.to }); onOpenChange(false); }} type="button"><Icon size={18} /><span>{command.label}</span></button>;
+          return <button key={command.to} onClick={() => { if (command.to === "/files" && supportUserId) void navigate({ to: "/files", search: supportSearch(supportUserId) }); else void navigate({ to: command.to }); onOpenChange(false); }} type="button"><Icon size={18} /><span>{command.label}</span></button>;
         })}
       </div>
       <div className="command-hints"><span><kbd>↑</kbd><kbd>↓</kbd> move</span><span><kbd>↵</kbd> open</span><span><kbd>esc</kbd> close</span></div>
@@ -159,7 +163,10 @@ function CommandPalette({ open, onOpenChange, user }: { open: boolean; onOpenCha
 export function AppShell({ user, children }: { user: User; children: ReactNode }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const location = useRouterState({ select: (state) => state.location });
+  const pathname = location.pathname;
+  const supportUserId = supportUserFromLocation(pathname, location.search as Record<string, unknown>);
+  const supportMode = Boolean(supportUserId);
   const [mobileNav, setMobileNav] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -179,17 +186,17 @@ export function AppShell({ user, children }: { user: User; children: ReactNode }
       } else if (!editing && event.key === "/") {
         event.preventDefault();
         document.querySelector<HTMLInputElement>("#global-search")?.focus();
-      } else if (!editing && event.key.toLowerCase() === "u") {
+      } else if (!supportMode && !editing && event.key.toLowerCase() === "u") {
         event.preventDefault();
         uploadInput.current?.click();
-      } else if (!editing && event.key.toLowerCase() === "n") {
+      } else if (!supportMode && !editing && event.key.toLowerCase() === "n") {
         event.preventDefault();
         window.dispatchEvent(new CustomEvent("arca:new-folder"));
       }
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, []);
+  }, [supportMode]);
 
   useEffect(() => {
     const source = new EventSource("/api/v1/events", { withCredentials: true });
@@ -224,10 +231,10 @@ export function AppShell({ user, children }: { user: User; children: ReactNode }
       </AnimatePresence>
       <aside className={`sidebar ${mobileNav ? "sidebar--open" : ""}`}>
         <div className="sidebar__brand">
-          <Link aria-label="Arca home" className="brand" to="/files"><ArcaMark size={31} /><span>arca</span></Link>
+          <Link aria-label="Arca home" className="brand" search={supportSearch(supportUserId)} to="/files"><ArcaMark size={31} /><span>arca</span></Link>
           <IconButton className="sidebar__close" label="Close navigation" onClick={() => setMobileNav(false)}><X size={18} /></IconButton>
         </div>
-        <div className="sidebar__new">
+        {!supportMode ? <div className="sidebar__new">
           <Button className="new-button" onClick={() => uploadInput.current?.click()}><Plus size={18} /><span>New upload</span></Button>
           <input
             className="sr-only"
@@ -240,10 +247,10 @@ export function AppShell({ user, children }: { user: User; children: ReactNode }
             ref={uploadInput}
             type="file"
           />
-        </div>
+        </div> : null}
         <nav aria-label="File navigation" className="sidebar__nav">
           <span className="nav-label">Workspace</span>
-          {personalNav.map((item) => <NavLink item={item} key={item.to} onNavigate={() => setMobileNav(false)} />)}
+          {personalNav.map((item) => <NavLink item={item} key={item.to} onNavigate={() => setMobileNav(false)} supportUserId={supportUserId} />)}
           {user.role === "superadmin" ? (
             <>
               <span className="nav-label nav-label--section">Administration</span>
@@ -272,19 +279,25 @@ export function AppShell({ user, children }: { user: User; children: ReactNode }
           <NotificationsMenu />
           <span className="topbar-avatar"><span className="avatar avatar--small">{initials(user.displayName || user.username)}</span></span>
         </header>
-        {user.state === "over_quota" ? <div className="system-banner"><Cloud size={17} /><span>Your storage is over quota. Downloads and cleanup remain available, but new uploads are paused.</span></div> : null}
+        {supportMode || user.state === "over_quota" ? <div className="system-banners">
+          {supportMode ? <div className="system-banner system-banner--support" role="status"><ShieldCheck size={17} /><div className="system-banner__copy"><strong>Audited support view</strong><span>Read-only access is active. Every opened or downloaded item is recorded, and changes are disabled.</span></div><Link className="button button--secondary system-banner__exit" to="/admin/users">Exit support view</Link></div> : null}
+          {user.state === "over_quota" ? <div className="system-banner"><Cloud size={17} /><span>Your storage is over quota. Downloads and cleanup remain available, but new uploads are paused.</span></div> : null}
+        </div> : null}
         <main className="main" id="main-content">{children}</main>
       </div>
-      <nav aria-label="Mobile navigation" className="bottom-nav">
+      <nav aria-label="Mobile navigation" className={`bottom-nav ${supportMode ? "bottom-nav--read-only" : ""}`}>
         {personalNav.slice(0, 4).map((item) => {
           const Icon = item.icon;
           const active = pathname === item.to || (item.to === "/files" && pathname.startsWith("/files/"));
-          return <Link aria-current={active ? "page" : undefined} className={active ? "active" : ""} key={item.to} to={item.to}><Icon size={20} /><span>{item.label.replace("My ", "")}</span></Link>;
+          const contents = <><Icon size={20} /><span>{item.label.replace("My ", "")}</span></>;
+          return item.to === "/files" && supportUserId
+            ? <Link aria-current={active ? "page" : undefined} className={active ? "active" : ""} key={item.to} search={supportSearch(supportUserId)} to="/files">{contents}</Link>
+            : <Link aria-current={active ? "page" : undefined} className={active ? "active" : ""} key={item.to} to={item.to}>{contents}</Link>;
         })}
-        <button onClick={() => uploadInput.current?.click()} type="button"><span className="bottom-new"><Upload size={20} /></span><span>Upload</span></button>
+        {!supportMode ? <button onClick={() => uploadInput.current?.click()} type="button"><span className="bottom-new"><Upload size={20} /></span><span>Upload</span></button> : null}
       </nav>
-      <CommandPalette open={commandOpen} onOpenChange={setCommandOpen} user={user} />
-      <UploadTray />
+      <CommandPalette open={commandOpen} onOpenChange={setCommandOpen} supportUserId={supportUserId} user={user} />
+      {!supportMode ? <UploadTray /> : null}
     </div>
   );
 }
