@@ -70,7 +70,7 @@ function UserDialog({ user, onClose }: { user: User | null; onClose: () => void 
   const [supportReason, setSupportReason] = useState("");
   useEffect(() => { if (user) { setQuotaGb(Math.max(1, Math.round(user.quota.quotaBytes / 1024 ** 3))); setRole(user.role); } }, [user]);
   const update = useMutation({ mutationFn: (input: Record<string, unknown>) => api.updateUser(user?.id ?? "", input), onSuccess: async () => { await queryClient.invalidateQueries({ queryKey: ["admin-users"] }); onClose(); } });
-  const support = useMutation({ mutationFn: () => api.updateUser(user?.id ?? "", { action: "start_support_access", reason: supportReason }), onSuccess: () => { window.location.assign(`/files?support_user=${user?.id ?? ""}`); } });
+  const support = useMutation({ mutationFn: () => api.startSupportAccess(user?.id ?? "", supportReason), onSuccess: () => { window.location.assign(`/files?support_user=${user?.id ?? ""}`); } });
   if (!user) return null;
   const suspendAction = user.state === "suspended" ? "activate" : "suspend";
   return (
@@ -119,7 +119,7 @@ export function AdminRequestsPage() {
   );
 }
 
-function MetricCard({ icon: Icon, label, value, note, tone }: { icon: typeof HardDrive; label: string; value: string; note: string; tone?: "warning" }) {
+function MetricCard({ icon: Icon, label, value, note, tone }: { icon: typeof HardDrive; label: string; value: string; note: string; tone?: "warning" | undefined }) {
   return <article className={`metric-card ${tone ? `metric-card--${tone}` : ""}`}><span className="metric-card__icon"><Icon size={19} /></span><div><span>{label}</span><strong>{value}</strong><small>{note}</small></div></article>;
 }
 
