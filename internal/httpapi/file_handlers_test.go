@@ -5,11 +5,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -79,8 +81,9 @@ func newFileHandlerFixture(t *testing.T) *fileHandlerFixture {
 	fileService := files.NewService(db, files.ServiceOptions{})
 	uploadService := uploads.NewService(db, storage, uploads.ServiceOptions{MaxChunkBytes: 32})
 	recorder := audit.NewSQLRecorder(db.Writer())
+	accountService := accounts.NewService(repo, nil, nil, recorder)
 	runtime := &app.Runtime{
-		Database: db, AccountRepo: repo, Files: fileService, Uploads: uploadService,
+		Database: db, Accounts: accountService, AccountRepo: repo, Files: fileService, Uploads: uploadService,
 		Storage: storage, Audit: recorder,
 	}
 	server := &Server{runtime: runtime, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
@@ -172,6 +175,33 @@ func TestSupportFileBrowsingIsReadOnlyAndAudited(t *testing.T) {
 	}
 }
 
+func TestSupportAccessCanBeReadAndExplicitlyRevoked(t *testing.T) {
+	fixture := newFileHandlerFixture(t)
+	grant, err := fixture.repo.CreateSupportAccess(context.Background(), fixture.admin.ID, fixture.owner.ID,
+		"Investigating a reported download failure", time.Now().UTC().Add(15*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	read := httptest.NewRecorder()
+	fixture.server.activeSupportAccess(read, requestAs(http.MethodGet, "/api/v1/support-access", nil, fixture.admin))
+	if read.Code != http.StatusOK || !strings.Contains(read.Body.String(), grant.ID) || !strings.Contains(read.Body.String(), fixture.owner.Username) {
+		t.Fatalf("active support status=%d body=%s", read.Code, read.Body.String())
+	}
+	revoke := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodDelete, "/api/v1/support-access/"+grant.ID, nil)
+	request = requestAs(http.MethodDelete, request.URL.String(), nil, fixture.admin)
+	route := chi.NewRouteContext()
+	route.URLParams.Add("accessID", grant.ID)
+	request = request.WithContext(context.WithValue(request.Context(), chi.RouteCtxKey, route))
+	fixture.server.revokeSupportAccess(revoke, request)
+	if revoke.Code != http.StatusOK {
+		t.Fatalf("revoke support status=%d body=%s", revoke.Code, revoke.Body.String())
+	}
+	if _, err := fixture.repo.GetActiveSupportAccess(context.Background(), fixture.admin.ID); !errors.Is(err, accounts.ErrNotFound) {
+		t.Fatalf("support grant remained active: %v", err)
+	}
+}
+
 func TestSaveCopyCreatesRecipientOwnedBlob(t *testing.T) {
 	fixture := newFileHandlerFixture(t)
 	source := fixture.uploadFile(t, fixture.owner.ID, fixture.owner.RootNodeID, "shared.txt", []byte("private copy"))
@@ -190,7 +220,7 @@ func TestSaveCopyCreatesRecipientOwnedBlob(t *testing.T) {
 
 	response := httptest.NewRecorder()
 	request := withNodeID(requestAs(http.MethodPost, "/api/v1/nodes/"+source.ID+"/save-copy",
-		strings.NewReader(`{"parent_id":"`+fixture.recipient.RootNodeID+`","name":"mine.txt","conflict":"fail"}`), fixture.recipient), source.ID)
+		strings.NewReader(`{"destinationId":"`+fixture.recipient.RootNodeID+`","name":"mine.txt","conflictMode":"fail"}`), fixture.recipient), source.ID)
 	fixture.server.saveNodeCopy(response, request)
 	if response.Code != http.StatusCreated {
 		t.Fatalf("save-copy status=%d body=%s", response.Code, response.Body.String())
@@ -309,6 +339,9 @@ func TestBulkMoveRestoreAndPurgeLifecycle(t *testing.T) {
 
 func TestArchiveStreamsSafePathsAndFileBodies(t *testing.T) {
 	fixture := newFileHandlerFixture(t)
+	if _, err := fixture.db.Writer().Exec(`UPDATE user_policies SET download_rate_bytes = 100000000 WHERE user_id = ?`, fixture.owner.ID); err != nil {
+		t.Fatal(err)
+	}
 	unsafe := fixture.uploadFile(t, fixture.owner.ID, fixture.owner.RootNodeID, `evil\name.txt`, []byte("root file"))
 	folder, err := fixture.files.CreateFolder(context.Background(), fixture.owner.ID, fixture.owner.RootNodeID, "Folder")
 	if err != nil {
@@ -317,7 +350,7 @@ func TestArchiveStreamsSafePathsAndFileBodies(t *testing.T) {
 	fixture.uploadFile(t, fixture.owner.ID, folder.ID, "nested.txt", []byte("nested file"))
 
 	response := httptest.NewRecorder()
-	body := `{"roots":["` + unsafe.ID + `","` + folder.ID + `"],"name":"bundle"}`
+	body := `{"nodeIds":["` + unsafe.ID + `","` + folder.ID + `"],"name":"bundle"}`
 	fixture.server.archiveNodes(response, requestAs(http.MethodPost, "/api/v1/nodes/archive", strings.NewReader(body), fixture.owner))
 	if response.Code != http.StatusOK || response.Header().Get("Content-Type") != "application/zip" {
 		t.Fatalf("archive status=%d headers=%v body=%s", response.Code, response.Header(), response.Body.String())
