@@ -79,4 +79,24 @@ describe("API boundary parsing", () => {
 
     expect(settings.allowedCorsOrigins).toEqual(["https://app.example.com"]);
   });
+
+  it("normalizes MIME and transfer limits in user policy responses", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({
+      quotaBytes: 10_000,
+      maxItems: 100,
+      maxConcurrentUploads: 3,
+      maxPendingUploads: 20,
+      maxPublicTtlMinutes: 10,
+      maxPublicRedemptions: 3,
+      allowedMimeGroups: ["image", "application"],
+      uploadRateBytes: 2_097_152,
+      downloadRateBytes: null,
+    }));
+
+    const policy = await api.policy("user-019");
+
+    expect(policy.allowedMimeGroups).toEqual(["image", "application"]);
+    expect(policy.uploadRateBytes).toBe(2_097_152);
+    expect(policy.downloadRateBytes).toBeNull();
+  });
 });
