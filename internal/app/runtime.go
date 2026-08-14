@@ -202,13 +202,16 @@ func ensureInstanceRow(ctx context.Context, db *database.DB, cfg config.Runtime)
 }
 
 func loadInstanceSettings(ctx context.Context, db *database.DB, cfg *config.Runtime) error {
-	var trustedJSON string
-	if err := db.Reader().QueryRowContext(ctx, `SELECT name, public_url, filesystem_reserve_bytes, trusted_proxy_cidrs
-		FROM instance_settings WHERE singleton = 1`).Scan(&cfg.File.InstanceName, &cfg.File.PublicURL, &cfg.File.FilesystemReserveBytes, &trustedJSON); err != nil {
+	var trustedJSON, originsJSON string
+	if err := db.Reader().QueryRowContext(ctx, `SELECT name, public_url, filesystem_reserve_bytes, trusted_proxy_cidrs, allowed_cors_origins
+		FROM instance_settings WHERE singleton = 1`).Scan(&cfg.File.InstanceName, &cfg.File.PublicURL, &cfg.File.FilesystemReserveBytes, &trustedJSON, &originsJSON); err != nil {
 		return fmt.Errorf("load instance settings: %w", err)
 	}
 	if err := json.Unmarshal([]byte(trustedJSON), &cfg.File.TrustedProxyCIDRs); err != nil {
 		return fmt.Errorf("decode trusted proxy settings: %w", err)
+	}
+	if err := json.Unmarshal([]byte(originsJSON), &cfg.File.AllowedCORSOrigins); err != nil {
+		return fmt.Errorf("decode CORS origin settings: %w", err)
 	}
 	return nil
 }
