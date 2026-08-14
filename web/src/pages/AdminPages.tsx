@@ -85,29 +85,53 @@ function UserDialog({ user, lastActiveSuperadmin, onClose, onDelete }: { user: U
         <section><h3>Account controls</h3><Field label="Role"><select disabled={accountLocked} onChange={(event) => setRole(event.target.value as User["role"])} value={role}><option disabled={lastActiveSuperadmin} value="member">Member</option><option value="superadmin">Superadmin</option></select></Field><Field label="Storage quota"><div className="input-suffix"><input disabled={accountLocked} min={1} onChange={(event) => setQuotaGb(Number(event.target.value))} type="number" value={quotaGb} /><span>GB</span></div></Field>{lastActiveSuperadmin ? <p className="muted">Promote another active superadmin before demoting, suspending, or deleting this account.</p> : null}<div className="dialog-actions dialog-actions--start"><Button disabled={accountLocked || update.isPending || (lastActiveSuperadmin && role !== "superadmin")} onClick={() => update.mutate({ role, quotaBytes: quotaGb * 1024 ** 3 })}>Save controls</Button>{user.state !== "deleted" ? <Button disabled={update.isPending || (lastActiveSuperadmin && !canRestore)} onClick={() => update.mutate({ action: canRestore ? "restore" : "suspend" })} variant={canRestore ? "secondary" : "danger"}>{canRestore ? user.state === "deletion_pending" ? "Restore during recovery" : "Restore account" : "Suspend account"}</Button> : null}</div></section>
         <section><h3>Audited support access</h3><p className="muted">Open this user’s files read-only for 15 minutes. Every opened item is recorded.</p><Field hint="Required, at least 10 characters" label="Reason"><textarea disabled={user.state === "deleted"} minLength={10} onChange={(event) => setSupportReason(event.target.value)} rows={3} value={supportReason} /></Field><Button disabled={user.state === "deleted" || supportReason.trim().length < 10 || support.isPending} onClick={() => support.mutate()} variant="secondary"><LifeBuoy size={16} />Begin support session</Button></section>
       </div>
-      {canScheduleDeletion ? <section className="account-danger"><div><h3>Schedule account deletion</h3><p>Immediately revoke access and begin a seven-day recovery window. Final content disposition is handled separately.</p></div><Button disabled={update.isPending} onClick={() => onDelete(user)} variant="danger"><Trash2 size={16} />Schedule deletion</Button></section> : null}
+      {canScheduleDeletion ? <section className="account-danger"><div><h3>Schedule account deletion</h3><p>Immediately revoke access and begin a seven-day recovery window. Choose whether the user’s content is transferred or permanently purged before scheduling.</p></div><Button disabled={update.isPending} onClick={() => onDelete(user)} variant="danger"><Trash2 size={16} />Schedule deletion</Button></section> : null}
       {update.error || support.error ? <p className="form-error" role="alert">{describeError(update.error ?? support.error)}</p> : null}
     </Modal>
   );
 }
 
-function DeleteUserDialog({ user, onClose }: { user: User | null; onClose: () => void }) {
+function DeleteUserDialog({ user, users, onClose }: { user: User | null; users: User[]; onClose: () => void }) {
   const queryClient = useQueryClient();
   const [confirmation, setConfirmation] = useState("");
-  useEffect(() => setConfirmation(""), [user]);
+  const transferTargets = useMemo(() => users.filter((candidate) => candidate.id !== user?.id && (candidate.state === "active" || candidate.state === "over_quota")), [user?.id, users]);
+  const [mode, setMode] = useState<"transfer" | "purge">("transfer");
+  const [transferToUserId, setTransferToUserId] = useState("");
+  useEffect(() => {
+    setConfirmation("");
+    setMode(transferTargets.length ? "transfer" : "purge");
+    setTransferToUserId(transferTargets[0]?.id ?? "");
+  }, [user, transferTargets]);
   const schedule = useMutation({
-    mutationFn: () => api.updateUser(user?.id ?? "", { action: "delete" }),
+    mutationFn: () => api.updateUser(user?.id ?? "", {
+      action: "delete",
+      deletionMode: mode,
+      ...(mode === "transfer" ? { transferToUserId } : {}),
+    }),
     onSuccess: async () => { await queryClient.invalidateQueries({ queryKey: ["admin-users"] }); onClose(); },
   });
   if (!user) return null;
-  const confirmed = confirmation === user.username;
+  const confirmed = confirmation === user.username && (mode === "purge" || Boolean(transferToUserId));
   return (
     <Modal open onOpenChange={(open) => { if (!open) onClose(); }} title="Schedule account deletion?" description={`This immediately removes access for @${user.username} and starts the seven-day recovery window.`}>
       <form className="dialog-form" onSubmit={(event) => { event.preventDefault(); if (confirmed) schedule.mutate(); }}>
         <div className="notice notice--warning"><AlertTriangle size={18} /><p>Existing sessions lose access immediately; API tokens, internal shares, and public shares are revoked. The account can be restored during recovery.</p></div>
-        <Field hint="This action schedules deletion only; ownership transfer or permanent purge is not selected here." label={`Type ${user.username} to confirm`}><input autoComplete="off" autoFocus onChange={(event) => setConfirmation(event.target.value)} spellCheck={false} value={confirmation} /></Field>
+        <fieldset className="deletion-choice">
+          <legend>After the recovery window</legend>
+          <label className={mode === "transfer" ? "selected" : ""}>
+            <input checked={mode === "transfer"} disabled={!transferTargets.length} name="deletion-mode" onChange={() => setMode("transfer")} type="radio" value="transfer" />
+            <span><strong>Transfer ownership</strong><small>Move the user’s entire vault into another active member’s root. Versions and stored bytes move with it.</small></span>
+          </label>
+          <label className={mode === "purge" ? "selected deletion-choice__danger" : "deletion-choice__danger"}>
+            <input checked={mode === "purge"} name="deletion-mode" onChange={() => setMode("purge")} type="radio" value="purge" />
+            <span><strong>Permanently purge content</strong><small>Delete all owned files, folders, versions, and pending uploads after seven days. This cannot be undone afterward.</small></span>
+          </label>
+        </fieldset>
+        {mode === "transfer" ? <Field hint="The destination must remain active until deletion completes." label="Transfer vault to"><select onChange={(event) => setTransferToUserId(event.target.value)} required value={transferToUserId}>{transferTargets.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.displayName || candidate.username} · @{candidate.username}</option>)}</select></Field> : <div className="notice notice--danger"><Trash2 size={18} /><p><strong>Permanent destruction selected.</strong> Restoring the account within seven days cancels this operation; after that point, Arca schedules unreferenced blobs for garbage collection.</p></div>}
+        {!transferTargets.length ? <p className="muted">There is no active transfer recipient, so permanent purge is the only available disposition.</p> : null}
+        <Field hint={`Enter the username exactly. This confirms both account deletion and the selected ${mode} plan.`} label={`Type ${user.username} to confirm`}><input autoComplete="off" autoFocus onChange={(event) => setConfirmation(event.target.value)} spellCheck={false} value={confirmation} /></Field>
         {schedule.error ? <p className="form-error" role="alert">{describeError(schedule.error)}</p> : null}
-        <div className="dialog-actions"><Button onClick={onClose} type="button" variant="ghost">Cancel</Button><Button disabled={!confirmed || schedule.isPending} variant="danger">{schedule.isPending ? "Scheduling…" : "Schedule deletion"}</Button></div>
+        <div className="dialog-actions"><Button onClick={onClose} type="button" variant="ghost">Cancel</Button><Button disabled={!confirmed || schedule.isPending} variant="danger">{schedule.isPending ? "Scheduling…" : mode === "transfer" ? "Schedule transfer & deletion" : "Schedule purge & deletion"}</Button></div>
       </form>
     </Modal>
   );
@@ -125,7 +149,7 @@ export function AdminUsersPage() {
       {users.isPending ? <SkeletonRows /> : users.isError ? <ErrorState error={users.error} onRetry={() => void users.refetch()} /> : !users.data.length ? <EmptyState title="No accounts" description="Create the first member account when your team is ready." /> : <div className="admin-table"><div className="admin-table__head"><span>User</span><span>Role</span><span>Status</span><span>Storage</span><span>Last sign-in</span><span /></div>{users.data.map((user) => { const percent = user.quota.unlimited || !user.quota.quotaBytes ? 0 : Math.min(100, user.quota.usedBytes / user.quota.quotaBytes * 100); return <button className="admin-table__row" key={user.id} onClick={() => setSelected(user)} type="button"><span className="person-cell"><i className="avatar">{initials(user.displayName || user.username)}</i><span><strong>{user.displayName || user.username}</strong><small>{user.email}</small></span></span><span><StatusPill tone={user.role === "superadmin" ? "accent" : "neutral"}>{user.role}</StatusPill></span><span><StatusPill tone={stateTone(user.state)}>{user.state.replace("_", " ")}</StatusPill></span><span className="storage-cell"><span><i style={{ width: `${percent}%` }} /></span><small>{user.quota.unlimited ? `${formatBytes(user.quota.usedBytes)} used` : `${formatBytes(user.quota.usedBytes)} / ${formatBytes(user.quota.quotaBytes)}`}</small></span><span>{formatRelativeDate(user.lastSignInAt)}</span><span>View</span></button>; })}</div>}
       <CreateUserDialog onClose={() => setCreateOpen(false)} open={createOpen} />
       <UserDialog lastActiveSuperadmin={selectedIsLastSuperadmin} onClose={() => setSelected(null)} onDelete={(user) => { setSelected(null); setDeleting(user); }} user={selected} />
-      <DeleteUserDialog onClose={() => setDeleting(null)} user={deleting} />
+      <DeleteUserDialog onClose={() => setDeleting(null)} user={deleting} users={users.data ?? []} />
     </AdminLayout>
   );
 }
