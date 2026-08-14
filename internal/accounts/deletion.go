@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"arca/internal/audit"
-	"arca/internal/database"
 )
 
 const DeletionJobKind = "accounts.delete"
@@ -404,7 +403,7 @@ func (r *Repository) finalizeDeletionLocal(ctx context.Context, userID string) (
 	return r.GetDeletion(ctx, userID)
 }
 
-func transferOwnedContent(ctx context.Context, tx database.Queryer, deletion Deletion, now time.Time) error {
+func transferOwnedContent(ctx context.Context, tx *sql.Tx, deletion Deletion, now time.Time) error {
 	var username, sourceRoot string
 	if err := tx.QueryRowContext(ctx, `SELECT username, COALESCE(root_node_id, '') FROM users WHERE id = ?`, deletion.UserID).Scan(&username, &sourceRoot); err != nil {
 		return err
@@ -445,7 +444,7 @@ func transferOwnedContent(ctx context.Context, tx database.Queryer, deletion Del
 	return err
 }
 
-func transferredRootName(ctx context.Context, tx database.Queryer, ownerID, parentID, username string) (string, string, error) {
+func transferredRootName(ctx context.Context, tx *sql.Tx, ownerID, parentID, username string) (string, string, error) {
 	base := "Transferred from @" + username
 	for suffix := 0; suffix <= 10_000; suffix++ {
 		name := base
@@ -464,7 +463,7 @@ func transferredRootName(ctx context.Context, tx database.Queryer, ownerID, pare
 	return "", "", fmt.Errorf("%w: too many transferred-folder name conflicts", ErrConflict)
 }
 
-func purgeOwnedContent(ctx context.Context, tx database.Queryer, deletion Deletion, now time.Time) error {
+func purgeOwnedContent(ctx context.Context, tx *sql.Tx, deletion Deletion, now time.Time) error {
 	if err := deletePrivateAccountMetadata(ctx, tx, deletion.UserID); err != nil {
 		return err
 	}
@@ -508,7 +507,7 @@ func purgeOwnedContent(ctx context.Context, tx database.Queryer, deletion Deleti
 	return nil
 }
 
-func cancelDeletionUploads(ctx context.Context, tx database.Queryer, userID string, now time.Time) error {
+func cancelDeletionUploads(ctx context.Context, tx *sql.Tx, userID string, now time.Time) error {
 	rows, err := tx.QueryContext(ctx, `SELECT id, owner_id, reserved_bytes, share_id FROM uploads
 		WHERE (owner_id = ? OR actor_id = ?) AND state = 'pending' ORDER BY id`, userID, userID)
 	if err != nil {
@@ -560,7 +559,7 @@ func cancelDeletionUploads(ctx context.Context, tx database.Queryer, userID stri
 	return nil
 }
 
-func deletePrivateAccountMetadata(ctx context.Context, tx database.Queryer, userID string) error {
+func deletePrivateAccountMetadata(ctx context.Context, tx *sql.Tx, userID string) error {
 	statements := []string{
 		`DELETE FROM shares WHERE owner_id = ?`,
 		`DELETE FROM public_shares WHERE owner_id = ?`,
