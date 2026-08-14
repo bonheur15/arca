@@ -226,6 +226,37 @@ func TestQuotaUpdateSetsAndClearsOverQuota(t *testing.T) {
 	}
 }
 
+func TestPurgeRejectedAccessRequestsRetainsThirtyDays(t *testing.T) {
+	db := openTestDB(t)
+	repository := NewRepository(db.Writer())
+	now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	admin, err := repository.CreateUser(context.Background(), CreateUserParams{
+		Username: "retention-admin", Email: "retention-admin@example.com", Role: RoleSuperadmin,
+		State: StateActive, QuotaBytes: 1, Policy: DefaultPolicy(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	insert := func(id string, decided time.Time) {
+		t.Helper()
+		if _, err := db.Writer().Exec(`INSERT INTO access_requests
+			(id, username, username_key, email, email_key, state, status_token_hash, requested_at, decided_at, decided_by)
+			VALUES (?, ?, ?, ?, ?, 'rejected', ?, ?, ?, ?)`, id, id, id, id+"@example.com", id+"@example.com", []byte(id), decided.Add(-time.Hour).Format(time.RFC3339Nano), decided.Format(time.RFC3339Nano), admin.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	insert("old-request", now.Add(-31*24*time.Hour))
+	insert("recent-request", now.Add(-29*24*time.Hour))
+	deleted, err := repository.PurgeRejectedAccessRequests(context.Background(), now.Add(-30*24*time.Hour))
+	if err != nil || deleted != 1 {
+		t.Fatalf("deleted=%d err=%v", deleted, err)
+	}
+	var remaining string
+	if err := db.Reader().QueryRow(`SELECT id FROM access_requests`).Scan(&remaining); err != nil || remaining != "recent-request" {
+		t.Fatalf("remaining=%q err=%v", remaining, err)
+	}
+}
+
 func TestSupportAccessIsShortLivedAndAuditable(t *testing.T) {
 	db := openTestDB(t)
 	repository := NewRepository(db.Writer())
