@@ -15,6 +15,8 @@ var (
 	ErrForbidden          = errors.New("accounts: forbidden")
 	ErrLastSuperadmin     = errors.New("accounts: cannot remove the final active superadmin")
 	ErrInvalidTransition  = errors.New("accounts: invalid state transition")
+	ErrDeletionNotDue     = errors.New("accounts: deletion recovery window is still active")
+	ErrDeletionBusy       = errors.New("accounts: deletion is waiting for storage activity to settle")
 	ErrRequestDecided     = errors.New("accounts: access request has already been decided")
 	ErrInvalidStatusToken = errors.New("accounts: invalid status token")
 	ErrAuditFailed        = errors.New("accounts: mutation committed but audit recording failed")
