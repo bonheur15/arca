@@ -33,6 +33,7 @@ type Runtime struct {
 	Accounts        *accounts.Service
 	AccountRepo     *accounts.Repository
 	Authentication  *auth.AuthService
+	IdentityEvents  *auth.EventReconciler
 	Tokens          *auth.TokenService
 	Files           *files.Service
 	Uploads         *uploads.Service
@@ -135,6 +136,10 @@ func Open(ctx context.Context, cfg config.Runtime, version string, logger *slog.
 	if err != nil {
 		return cleanup(err)
 	}
+	eventReconciler, err := auth.NewEventReconciler(db.Writer(), repository, authService, dynamicProvider, recorder)
+	if err != nil {
+		return cleanup(err)
+	}
 	fileService := files.NewService(db, files.ServiceOptions{})
 	storage, err := uploads.NewLocalStorage(cfg.Layout.Root)
 	if err != nil {
@@ -157,7 +162,7 @@ func Open(ctx context.Context, cfg config.Runtime, version string, logger *slog.
 	}
 	runtime := &Runtime{
 		Config: &cfg, Database: db, Accounts: accountService, AccountRepo: repository,
-		Authentication: authService, Tokens: tokenService, Files: fileService,
+		Authentication: authService, IdentityEvents: eventReconciler, Tokens: tokenService, Files: fileService,
 		Uploads: uploadService, Storage: storage, Shares: shareService,
 		Jobs: jobRunner, Backup: backup.New(db.Writer(), backup.Layout{Database: cfg.Layout.Database, BlobDir: cfg.Layout.BlobDir}, version),
 		Bootstrap: bootstrapService, Provider: dynamicProvider, Audit: recorder,
@@ -243,6 +248,27 @@ func (r *Runtime) StartBackground(parent context.Context) error {
 		defer r.backgroundGroup.Done()
 		if err := r.Jobs.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 			r.logger.Error("background runner stopped", "error", err)
+		}
+	}()
+	r.backgroundGroup.Add(1)
+	go func() {
+		defer r.backgroundGroup.Done()
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			if r.Config.Secrets.WorkOSAPIKey != "" && r.Config.File.WorkOSClientID != "" {
+				pollCtx, cancelPoll := context.WithTimeout(ctx, 20*time.Second)
+				_, err := r.IdentityEvents.PollOnce(pollCtx, 100)
+				cancelPoll()
+				if err != nil && !errors.Is(err, context.Canceled) {
+					r.logger.Warn("WorkOS event reconciliation failed", "error", err)
+				}
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
 		}
 	}()
 	return nil
