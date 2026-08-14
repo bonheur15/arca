@@ -473,6 +473,12 @@ func (s *Server) purgeNode(w http.ResponseWriter, r *http.Request) {
 		s.handleError(w, r, err)
 		return
 	}
+	if err := s.recordRequestAudit(r, "node.purged", "node", chi.URLParam(r, "nodeID"), map[string]any{
+		"nodes_deleted": result.NodesDeleted, "versions_deleted": result.VersionsDeleted, "blobs_queued": result.BlobsQueued,
+	}); err != nil {
+		s.handleError(w, r, err)
+		return
+	}
 	WriteJSON(w, http.StatusOK, result)
 }
 
@@ -610,6 +616,17 @@ func (s *Server) bulkNodes(w http.ResponseWriter, r *http.Request) {
 	if body.Action == "purge" {
 		response["summary"] = map[string]int64{
 			"nodes_deleted": purgeResult.NodesDeleted, "versions_deleted": purgeResult.VersionsDeleted, "blobs_queued": purgeResult.BlobsQueued,
+		}
+		rootIDs := make([]string, 0, len(body.Items))
+		for _, item := range body.Items {
+			rootIDs = append(rootIDs, item.ID)
+		}
+		if err := s.recordRequestAudit(r, "nodes.bulk_purged", "nodes", "", map[string]any{
+			"root_ids": rootIDs, "nodes_deleted": purgeResult.NodesDeleted,
+			"versions_deleted": purgeResult.VersionsDeleted, "blobs_queued": purgeResult.BlobsQueued,
+		}); err != nil {
+			s.handleError(w, r, err)
+			return
 		}
 	}
 	WriteJSON(w, http.StatusOK, response)
