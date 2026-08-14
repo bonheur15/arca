@@ -53,6 +53,13 @@ func (s *Service) Expire(ctx context.Context, limit int) (int, error) {
 // zero and the 24-hour grace timestamp has elapsed. Filesystem deletion comes
 // first, making a crash safely retryable.
 func (s *Service) CollectGarbage(ctx context.Context, limit int) (int, error) {
+	var backupLease int
+	if err := s.db.Reader().QueryRowContext(ctx, `SELECT COUNT(*) FROM operation_leases WHERE name = 'backup' AND lease_until > ?`, timeText(s.now())).Scan(&backupLease); err != nil {
+		return 0, files.WrapError(files.CodeInvalid, "check backup lease", "", err)
+	}
+	if backupLease != 0 {
+		return 0, nil
+	}
 	if limit <= 0 || limit > 1000 {
 		limit = 100
 	}
