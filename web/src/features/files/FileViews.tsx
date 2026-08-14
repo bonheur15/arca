@@ -109,7 +109,7 @@ function NodeMenu({ node, collection, readOnly, onPreview, onDetails, onRename, 
   );
 }
 
-function NodeName({ node, onPreview, supportUserId }: { node: ArcaNode; onPreview: () => void; supportUserId?: string | null }) {
+function NodeName({ node, onPreview, supportUserId }: { node: ArcaNode; onPreview: () => void; supportUserId?: string | null | undefined }) {
   if (node.kind === "folder") return <Link className="node-name" to="/files/$folderId" params={{ folderId: node.id }} search={supportSearch(supportUserId)}>{node.name}</Link>;
   return <button className="node-name" onClick={onPreview} type="button">{node.name}</button>;
 }
@@ -209,7 +209,7 @@ function FileGrid({ nodes, collection, selected, onSelect, onPreview, onDetails,
   );
 }
 
-function PreviewDialog({ node, onClose, supportUserId }: { node: ArcaNode | null; onClose: () => void; supportUserId?: string | null }) {
+function PreviewDialog({ node, onClose, supportUserId }: { node: ArcaNode | null; onClose: () => void; supportUserId?: string | null | undefined }) {
   const category = node ? fileCategory(node.mimeType, node.name) : "generic";
   const canInline = ["image", "video", "audio", "pdf", "text", "code"].includes(category);
   const text = useQuery({
@@ -367,7 +367,7 @@ function ConfirmDialog({ node, action, onClose, onConfirm, pending, error }: { n
   return <Modal open={Boolean(node)} onOpenChange={(open) => { if (!open) onClose(); }} title={destructive ? "Delete forever?" : "Move to trash?"} description={destructive ? "This cannot be undone. Historical versions may also become eligible for cleanup." : "You can restore this item from Trash for up to 30 days."} footer={<><Button variant="ghost" onClick={onClose}>Cancel</Button><Button variant={destructive ? "danger" : "primary"} disabled={pending} onClick={onConfirm}>{pending ? "Working…" : destructive ? "Delete forever" : "Move to trash"}</Button></>}><div className="confirm-item"><FileIcon node={node ?? ({ kind: "file" } as ArcaNode)} /><strong>{node?.name}</strong></div>{error ? <p className="form-error">{describeError(error)}</p> : null}</Modal>;
 }
 
-function Breadcrumbs({ page, collection, supportUserId }: { page: NodePage; collection: Collection; supportUserId?: string | null }) {
+function Breadcrumbs({ page, collection, supportUserId }: { page: NodePage; collection: Collection; supportUserId?: string | null | undefined }) {
   if (collection !== "files") return null;
   const crumbs = page.breadcrumbs.length ? page.breadcrumbs : [{ id: null, name: "My files" }];
   return <nav aria-label="Breadcrumb" className="breadcrumbs">{crumbs.map((crumb, index) => <span key={crumb.id ?? "root"}>{index ? <ChevronRight size={14} /> : null}{index === crumbs.length - 1 ? <strong>{crumb.name}</strong> : crumb.id ? <Link to="/files/$folderId" params={{ folderId: crumb.id }} search={supportSearch(supportUserId)}>{crumb.name}</Link> : <Link to="/files" search={supportSearch(supportUserId)}>{crumb.name}</Link>}</span>)}</nav>;
@@ -395,18 +395,19 @@ function ManagedShares() {
   );
 }
 
-export function FileBrowser({ collection, folderId = null, query = "" }: { collection: Collection; folderId?: string | null; query?: string }) {
+export function FileBrowser({ collection, folderId = null, query = "", supportUserId = null }: { collection: Collection; folderId?: string | null; query?: string; supportUserId?: string | null | undefined }) {
   const navigate = useNavigate();
   const routerSearch = useRouterState({ select: (state) => state.location.search as Record<string, unknown> });
   const view = routerSearch.view === "grid" ? "grid" : "list";
   const sort = typeof routerSearch.sort === "string" ? routerSearch.sort : "name";
   const order = routerSearch.order === "desc" ? "desc" : "asc";
+  const readOnly = Boolean(supportUserId);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [preview, setPreview] = useState<ArcaNode | null>(null);
   const [details, setDetails] = useState<ArcaNode | null>(null);
   const [renaming, setRenaming] = useState<ArcaNode | null>(null);
   const [sharing, setSharing] = useState<ArcaNode[]>([]);
-  const [destination, setDestination] = useState<{ node: ArcaNode; mode: "move" | "copy" } | null>(null);
+  const [destination, setDestination] = useState<DestinationOperation | null>(null);
   const [confirm, setConfirm] = useState<{ node: ArcaNode; action: "trash" | "purge" } | null>(null);
   const [newFolder, setNewFolder] = useState(false);
   const [dragActive, setDragActive] = useState(false);
@@ -415,8 +416,8 @@ export function FileBrowser({ collection, folderId = null, query = "" }: { colle
   const { addFiles, addFolderTree } = useUploads();
   const queryClient = useQueryClient();
   const data = useQuery({
-    queryKey: ["nodes", collection, folderId, query, sort, order],
-    queryFn: () => collection === "files" ? api.nodes({ ...(folderId ? { parentId: folderId } : {}), sort, order }) : collection === "search" ? api.search(query) : api.collection(collection, query),
+    queryKey: ["nodes", collection, folderId, query, sort, order, supportUserId],
+    queryFn: () => collection === "files" ? api.nodes({ ...(folderId ? { parentId: folderId } : {}), ...(supportUserId ? { supportUserId } : {}), sort, order }) : collection === "search" ? api.search(query) : api.collection(collection, query),
   });
   const action = useMutation({
     mutationFn: async ({ node, kind }: { node: ArcaNode; kind: "trash" | "restore" | "purge" }) => {
@@ -429,12 +430,22 @@ export function FileBrowser({ collection, folderId = null, query = "" }: { colle
   const favorite = useMutation({ mutationFn: ({ node, next }: { node: ArcaNode; next: boolean }) => api.favoriteNode(node.id, next), onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["nodes"] }) });
 
   useEffect(() => {
-    const open = () => setNewFolder(true);
+    const open = () => { if (!readOnly) setNewFolder(true); };
     window.addEventListener("arca:new-folder", open);
     folderInput.current?.setAttribute("webkitdirectory", "");
     folderInput.current?.setAttribute("directory", "");
     return () => window.removeEventListener("arca:new-folder", open);
-  }, []);
+  }, [readOnly]);
+
+  useEffect(() => {
+    if (!readOnly) return;
+    setRenaming(null);
+    setSharing([]);
+    setDestination(null);
+    setConfirm(null);
+    setNewFolder(false);
+    setDragActive(false);
+  }, [readOnly]);
 
   const nodes = data.data?.items ?? [];
   const selectedNodes = nodes.filter((node) => selected.has(node.id));
@@ -446,9 +457,10 @@ export function FileBrowser({ collection, folderId = null, query = "" }: { colle
   };
   const setView = (next: ViewMode) => updateUrlPreference("view", next);
   const toggleSelect = useCallback((id: string, checked: boolean) => setSelected((current) => { const next = new Set(current); if (checked) next.add(id); else next.delete(id); return next; }), []);
-  const openNode = (node: ArcaNode) => node.kind === "folder" ? void navigate({ to: "/files/$folderId", params: { folderId: node.id } }) : setPreview(node);
+  const openNode = (node: ArcaNode) => node.kind === "folder" ? void navigate({ to: "/files/$folderId", params: { folderId: node.id }, search: supportSearch(supportUserId) }) : setPreview(node);
   const copy = collectionCopy[collection];
-  const title = collection === "search" && query ? `Results for “${query}”` : copy.title;
+  const title = readOnly ? "Member files" : collection === "search" && query ? `Results for “${query}”` : copy.title;
+  const subtitle = readOnly ? "Browse and inspect this vault without changing its contents." : copy.subtitle;
 
   useEffect(() => {
     const keyboard = (event: KeyboardEvent) => {
@@ -456,50 +468,46 @@ export function FileBrowser({ collection, folderId = null, query = "" }: { colle
       if (target?.matches("input, textarea, select, [contenteditable='true']")) return;
       if (event.key === "Escape") setSelected(new Set());
       if (selectedNodes.length === 1 && event.key === " ") { event.preventDefault(); openNode(selectedNodes[0]!); }
-      if (selectedNodes.length === 1 && event.key === "F2" && selectedNodes[0]?.capabilities.write) { event.preventDefault(); setRenaming(selectedNodes[0]); }
-      if (selectedNodes.length === 1 && event.key === "Delete" && selectedNodes[0]?.capabilities.trash) { event.preventDefault(); setConfirm({ node: selectedNodes[0], action: "trash" }); }
+      if (!readOnly && selectedNodes.length === 1 && event.key === "F2" && selectedNodes[0]?.capabilities.write) { event.preventDefault(); setRenaming(selectedNodes[0]); }
+      if (!readOnly && selectedNodes.length === 1 && event.key === "Delete" && selectedNodes[0]?.capabilities.trash) { event.preventDefault(); setConfirm({ node: selectedNodes[0], action: "trash" }); }
     };
     window.addEventListener("keydown", keyboard);
     return () => window.removeEventListener("keydown", keyboard);
-  }, [selectedNodes]);
+  }, [readOnly, selectedNodes, supportUserId]);
 
   return (
     <div className={`files-layout ${details ? "files-layout--details" : ""}`}>
       <section
-        className={`file-browser ${dragActive ? "file-browser--drag" : ""}`}
-        onDragEnter={(event) => { if (collection === "files" && event.dataTransfer.types.includes("Files")) { event.preventDefault(); setDragActive(true); } }}
+        className={`file-browser ${dragActive ? "file-browser--drag" : ""} ${readOnly ? "file-browser--read-only" : ""}`}
+        onDragEnter={(event) => { if (!readOnly && collection === "files" && event.dataTransfer.types.includes("Files")) { event.preventDefault(); setDragActive(true); } }}
         onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragActive(false); }}
-        onDragOver={(event) => { if (collection === "files") event.preventDefault(); }}
-        onDrop={(event) => { if (collection === "files") { event.preventDefault(); setDragActive(false); const files = Array.from(event.dataTransfer.files); if (files.length) addFiles(files, folderId); } }}
+        onDragOver={(event) => { if (!readOnly && collection === "files") event.preventDefault(); }}
+        onDrop={(event) => { if (!readOnly && collection === "files") { event.preventDefault(); setDragActive(false); const files = Array.from(event.dataTransfer.files); if (files.length) addFiles(files, folderId); } }}
       >
         {dragActive ? <div className="drop-overlay"><Upload size={25} /><strong>Drop files into this folder</strong><span>Uploads begin immediately and remain resumable.</span></div> : null}
-        {data.data ? <Breadcrumbs collection={collection} page={data.data} /> : null}
-        <div className="page-title-row"><div className="page-heading"><h1>{title}</h1><p>{copy.subtitle}</p></div>{collection === "trash" ? <StatusPill tone="neutral">30-day retention</StatusPill> : null}</div>
+        {data.data ? <Breadcrumbs collection={collection} page={data.data} supportUserId={supportUserId} /> : null}
+        <div className="page-title-row"><div className="page-heading"><h1>{title}</h1><p>{subtitle}</p></div>{collection === "trash" ? <StatusPill tone="neutral">30-day retention</StatusPill> : null}</div>
         <div className="file-toolbar">
           {selected.size ? (
-            <div className="selection-toolbar"><button className="selection-count" onClick={() => setSelected(new Set())} type="button"><X size={15} />{selected.size} selected</button>{selectedNodes.every((node) => node.capabilities.share) && collection !== "trash" ? <Button variant="secondary" onClick={() => setSharing(selectedNodes)}><Share2 size={16} />Share</Button> : null}{selectedNodes.length === 1 ? <Button variant="ghost" onClick={() => favorite.mutate({ node: selectedNodes[0]!, next: !selectedNodes[0]!.favorite })}><Star fill={selectedNodes[0]?.favorite ? "currentColor" : "none"} size={16} />{selectedNodes[0]?.favorite ? "Unstar" : "Star"}</Button> : null}</div>
+            <div className="selection-toolbar"><button className="selection-count" onClick={() => setSelected(new Set())} type="button"><X size={15} />{selected.size} selected</button>{!readOnly && selectedNodes.every((node) => node.capabilities.share) && collection !== "trash" ? <Button variant="secondary" onClick={() => setSharing(selectedNodes)}><Share2 size={16} />Share</Button> : null}{!readOnly && selectedNodes.length === 1 ? <Button variant="ghost" onClick={() => favorite.mutate({ node: selectedNodes[0]!, next: !selectedNodes[0]!.favorite })}><Star fill={selectedNodes[0]?.favorite ? "currentColor" : "none"} size={16} />{selectedNodes[0]?.favorite ? "Unstar" : "Star"}</Button> : null}</div>
           ) : (
-            <div className="file-toolbar__primary">{collection === "files" ? <><Button onClick={() => fileInput.current?.click()}><Upload size={17} />Upload</Button><Button variant="secondary" onClick={() => setNewFolder(true)}><Plus size={17} />New folder</Button><Button className="desktop-folder-upload" variant="ghost" onClick={() => folderInput.current?.click()}><FolderInput size={17} />Upload folder</Button><input className="sr-only" multiple ref={fileInput} type="file" onChange={(event) => { const files = Array.from(event.target.files ?? []); if (files.length) addFiles(files, folderId); event.target.value = ""; }} /><input className="sr-only" multiple ref={folderInput} type="file" onChange={(event) => { const files = Array.from(event.target.files ?? []); if (files.length) void addFolderTree(files, folderId); event.target.value = ""; }} /></> : null}</div>
+            <div className="file-toolbar__primary">{readOnly ? <StatusPill tone="accent"><ShieldCheck size={12} />Read only</StatusPill> : collection === "files" ? <><Button onClick={() => fileInput.current?.click()}><Upload size={17} />Upload</Button><Button variant="secondary" onClick={() => setNewFolder(true)}><Plus size={17} />New folder</Button><Button className="desktop-folder-upload" variant="ghost" onClick={() => folderInput.current?.click()}><FolderInput size={17} />Upload folder</Button><input className="sr-only" multiple ref={fileInput} type="file" onChange={(event) => { const files = Array.from(event.target.files ?? []); if (files.length) addFiles(files, folderId); event.target.value = ""; }} /><input className="sr-only" multiple ref={folderInput} type="file" onChange={(event) => { const files = Array.from(event.target.files ?? []); if (files.length) void addFolderTree(files, folderId); event.target.value = ""; }} /></> : null}</div>
           )}
           <div className="file-toolbar__view">
             <label className="sort-select">Sort <select onChange={(event) => updateUrlPreference("sort", event.target.value)} value={sort}><option value="name">Name</option><option value="updated_at">Modified</option><option value="size_bytes">Size</option></select><ChevronDown size={14} /></label>
             <div className="segmented" aria-label="View style"><IconButton className={view === "list" ? "active" : ""} label="List view" onClick={() => setView("list")}><List size={17} /></IconButton><IconButton className={view === "grid" ? "active" : ""} label="Grid view" onClick={() => setView("grid")}><Grid2X2 size={17} /></IconButton></div>
           </div>
         </div>
-        {data.isPending ? <SkeletonRows /> : data.isError ? <ErrorState error={data.error} onRetry={() => void data.refetch()} /> : nodes.length === 0 ? <EmptyState icon={collection === "trash" ? "archive" : "empty"} title={copy.emptyTitle} description={copy.emptyDescription} action={collection === "files" ? <Button onClick={() => fileInput.current?.click()}><Upload size={17} />Upload your first file</Button> : undefined} /> : view === "grid" ? (
-          <FileGrid collection={collection} nodes={nodes} onCopy={(node) => setDestination({ node, mode: "copy" })} onDetails={setDetails} onMove={(node) => setDestination({ node, mode: "move" })} onPreview={openNode} onPurge={(node) => setConfirm({ node, action: "purge" })} onRename={setRenaming} onRestore={(node) => action.mutate({ node, kind: "restore" })} onSelect={toggleSelect} onShare={(node) => setSharing([node])} onTrash={(node) => setConfirm({ node, action: "trash" })} selected={selected} />
+        {data.isPending ? <SkeletonRows /> : data.isError ? <ErrorState error={data.error} onRetry={() => void data.refetch()} /> : nodes.length === 0 ? <EmptyState icon={collection === "trash" ? "archive" : "empty"} title={readOnly ? "This vault is empty" : copy.emptyTitle} description={readOnly ? "There are no files or folders to inspect here." : copy.emptyDescription} action={!readOnly && collection === "files" ? <Button onClick={() => fileInput.current?.click()}><Upload size={17} />Upload your first file</Button> : undefined} /> : view === "grid" ? (
+          <FileGrid collection={collection} nodes={nodes} onCopy={(node) => setDestination({ node, mode: "copy" })} onDetails={setDetails} onMove={(node) => setDestination({ node, mode: "move" })} onPreview={openNode} onPurge={(node) => setConfirm({ node, action: "purge" })} onRename={setRenaming} onRestore={(node) => action.mutate({ node, kind: "restore" })} onSaveCopy={(node) => setDestination({ node, mode: "save-copy" })} onSelect={toggleSelect} onShare={(node) => setSharing([node])} onTrash={(node) => setConfirm({ node, action: "trash" })} readOnly={readOnly} selected={selected} supportUserId={supportUserId} />
         ) : (
-          <FileList collection={collection} nodes={nodes} onCopy={(node) => setDestination({ node, mode: "copy" })} onDetails={setDetails} onMove={(node) => setDestination({ node, mode: "move" })} onPreview={openNode} onPurge={(node) => setConfirm({ node, action: "purge" })} onRename={setRenaming} onRestore={(node) => action.mutate({ node, kind: "restore" })} onSelect={toggleSelect} onShare={(node) => setSharing([node])} onTrash={(node) => setConfirm({ node, action: "trash" })} selected={selected} />
+          <FileList collection={collection} nodes={nodes} onCopy={(node) => setDestination({ node, mode: "copy" })} onDetails={setDetails} onMove={(node) => setDestination({ node, mode: "move" })} onPreview={openNode} onPurge={(node) => setConfirm({ node, action: "purge" })} onRename={setRenaming} onRestore={(node) => action.mutate({ node, kind: "restore" })} onSaveCopy={(node) => setDestination({ node, mode: "save-copy" })} onSelect={toggleSelect} onShare={(node) => setSharing([node])} onTrash={(node) => setConfirm({ node, action: "trash" })} readOnly={readOnly} selected={selected} supportUserId={supportUserId} />
         )}
         {collection === "shared" ? <ManagedShares /> : null}
       </section>
       <DetailsPanel node={details} onClose={() => setDetails(null)} />
-      <PreviewDialog node={preview} onClose={() => setPreview(null)} />
-      <RenameDialog node={renaming} onClose={() => setRenaming(null)} />
-      <ShareDialog nodes={sharing} onClose={() => setSharing([])} />
-      <DestinationDialog onClose={() => setDestination(null)} operation={destination} />
-      <NewFolderDialog onClose={() => setNewFolder(false)} open={newFolder} parentId={folderId} />
-      <ConfirmDialog action={confirm?.action ?? "trash"} error={action.error} node={confirm?.node ?? null} onClose={() => setConfirm(null)} onConfirm={() => { if (confirm) action.mutate({ node: confirm.node, kind: confirm.action }); }} pending={action.isPending} />
+      <PreviewDialog node={preview} onClose={() => setPreview(null)} supportUserId={supportUserId} />
+      {!readOnly ? <><RenameDialog node={renaming} onClose={() => setRenaming(null)} /><ShareDialog nodes={sharing} onClose={() => setSharing([])} /><DestinationDialog onClose={() => setDestination(null)} operation={destination} /><NewFolderDialog onClose={() => setNewFolder(false)} open={newFolder} parentId={folderId} /><ConfirmDialog action={confirm?.action ?? "trash"} error={action.error} node={confirm?.node ?? null} onClose={() => setConfirm(null)} onConfirm={() => { if (confirm) action.mutate({ node: confirm.node, kind: confirm.action }); }} pending={action.isPending} /></> : null}
     </div>
   );
 }
