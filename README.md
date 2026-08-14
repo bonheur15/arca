@@ -13,7 +13,7 @@ The current v1 implementation includes:
 
 ## Build
 
-Requirements are Go 1.25+, Node.js, and pnpm 10.33.0.
+Requirements are Go 1.25.13+, Node.js, and pnpm 10.33.0.
 
 ```sh
 make install-web
@@ -45,4 +45,3 @@ For remote access, use an HTTPS reverse proxy and set the public URL to its exac
 - [Contributing](CONTRIBUTING.md)
 
 No license has been selected yet. Copyright and redistribution rights are therefore not granted by this repository.
-
