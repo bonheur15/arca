@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -437,5 +436,3 @@ func constantStringEqual(first, second string) bool {
 	}
 	return result == 0
 }
-
-var errNotImplemented = errors.New("not implemented")
