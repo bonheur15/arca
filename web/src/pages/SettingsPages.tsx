@@ -44,8 +44,8 @@ export function ProfileSettingsPage({ user }: { user: User }) {
 }
 
 const accents: Array<{ value: Accent; label: string }> = [
-  { value: "violet", label: "Violet" }, { value: "indigo", label: "Indigo" }, { value: "blue", label: "Blue" }, { value: "teal", label: "Teal" },
-  { value: "green", label: "Green" }, { value: "amber", label: "Amber" }, { value: "orange", label: "Orange" }, { value: "rose", label: "Rose" },
+  { value: "violet", label: "Violet" }, { value: "indigo", label: "Indigo" }, { value: "blue", label: "Blue" }, { value: "cyan", label: "Cyan" },
+  { value: "teal", label: "Teal" }, { value: "green", label: "Green" }, { value: "amber", label: "Amber" }, { value: "rose", label: "Rose" },
 ];
 
 export function AppearanceSettingsPage({ user }: { user: User }) {
