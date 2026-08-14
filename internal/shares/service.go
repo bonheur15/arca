@@ -73,7 +73,7 @@ type InternalShare struct {
 }
 
 func (s *Service) CreateInternal(ctx context.Context, input CreateInternalInput) (InternalShare, error) {
-	if input.OwnerID == "" || len(input.RootIDs) == 0 || len(input.RecipientIDs) == 0 {
+	if input.OwnerID == "" || len(input.RootIDs) == 0 || len(input.RootIDs) > 500 || len(input.RecipientIDs) == 0 || len(input.RecipientIDs) > 500 {
 		return InternalShare{}, ErrInvalid
 	}
 	if input.Permission != PermissionViewer && input.Permission != PermissionEditor {
@@ -89,6 +89,16 @@ func (s *Service) CreateInternal(ctx context.Context, input CreateInternalInput)
 	now := s.now().UTC()
 	if input.ExpiresAt != nil && !input.ExpiresAt.After(now) {
 		return InternalShare{}, ErrInvalid
+	}
+	var allowed bool
+	err := s.db.QueryRowContext(ctx, `SELECT p.allow_internal_sharing FROM users u
+		JOIN user_policies p ON p.user_id = u.id
+		WHERE u.id = ? AND u.state IN ('active', 'over_quota')`, input.OwnerID).Scan(&allowed)
+	if errors.Is(err, sql.ErrNoRows) || !allowed {
+		return InternalShare{}, ErrForbidden
+	}
+	if err != nil {
+		return InternalShare{}, err
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -232,7 +242,7 @@ type PublicShare struct {
 }
 
 func (s *Service) CreatePublic(ctx context.Context, input CreatePublicInput) (PublicShare, error) {
-	if input.OwnerID == "" || len(input.RootIDs) == 0 || input.TTL <= 0 || input.TTL > 30*time.Minute || input.RedemptionLimit < 1 || input.RedemptionLimit > 10 {
+	if input.OwnerID == "" || len(input.RootIDs) == 0 || len(input.RootIDs) > 500 || input.TTL <= 0 || input.TTL > 30*time.Minute || input.RedemptionLimit < 1 || input.RedemptionLimit > 10 {
 		return PublicShare{}, ErrInvalid
 	}
 	var allow bool
