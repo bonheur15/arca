@@ -71,7 +71,7 @@ func (r *Repository) createUserTx(ctx context.Context, tx *sql.Tx, params Create
 		return nil, fmt.Errorf("%w: quota must not be negative", ErrInvalidInput)
 	}
 	policy := params.Policy
-	if policy.MaxItems == 0 {
+	if isZeroPolicy(policy) {
 		policy = DefaultPolicy()
 	}
 	if err := ValidatePolicy(policy); err != nil {
@@ -124,6 +124,15 @@ func (r *Repository) createUserTx(ctx context.Context, tx *sql.Tx, params Create
 	}, nil
 }
 
+func isZeroPolicy(policy Policy) bool {
+	return policy.MaxFileBytes == nil && policy.MaxItems == 0 &&
+		!policy.AllowInternalSharing && !policy.AllowPublicSharing && !policy.AllowAPITokens &&
+		policy.MaxConcurrentUploads == 0 && policy.MaxPendingUploads == 0 &&
+		policy.MaxActivePublicShares == 0 && policy.MaxPublicTTLMinutes == 0 &&
+		policy.MaxPublicRedemptions == 0 && len(policy.AllowedMIMEGroups) == 0 &&
+		len(policy.BlockedExtensions) == 0 && policy.UploadRateBytes == nil && policy.DownloadRateBytes == nil
+}
+
 func (r *Repository) CompleteProvisioning(ctx context.Context, userID, workosUserID string) (*User, error) {
 	if workosUserID == "" {
 		return nil, fmt.Errorf("%w: WorkOS user id is required", ErrInvalidInput)
@@ -162,6 +171,24 @@ func (r *Repository) UpdateIdentityEmail(ctx context.Context, workosUserID, emai
 		email, emailKey, formatTime(r.now().UTC()), workosUserID)
 	if err != nil {
 		return nil, classifyWriteError("reconcile identity email", err)
+	}
+	if changed, _ := result.RowsAffected(); changed == 0 {
+		return nil, ErrNotFound
+	}
+	return r.GetUserByWorkOSID(ctx, workosUserID)
+}
+
+// SuspendIdentityDeleted is reserved for verified WorkOS user.deleted events.
+// It intentionally bypasses the final-superadmin safeguard: retaining an
+// active local authorization record after its immutable identity was deleted
+// would be unsafe. Operators can recover through the local admin command.
+func (r *Repository) SuspendIdentityDeleted(ctx context.Context, workosUserID string) (*User, error) {
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE users SET state = 'suspended', updated_at = ?
+		WHERE workos_user_id = ? AND state <> 'deleted'`,
+		formatTime(r.now().UTC()), workosUserID)
+	if err != nil {
+		return nil, fmt.Errorf("accounts: suspend deleted identity: %w", err)
 	}
 	if changed, _ := result.RowsAffected(); changed == 0 {
 		return nil, ErrNotFound
@@ -305,6 +332,41 @@ func (r *Repository) UpdatePreferences(ctx context.Context, userID string, prefe
 		return nil, fmt.Errorf("accounts: update preferences: %w", err)
 	}
 	if changed, _ := result.RowsAffected(); changed == 0 {
+		return nil, ErrNotFound
+	}
+	return r.GetUserByID(ctx, userID)
+}
+
+func (r *Repository) UpdateProfile(ctx context.Context, userID string, update ProfileUpdate) (*User, error) {
+	if update.Username == nil && update.DisplayName == nil {
+		return nil, fmt.Errorf("%w: profile update is empty", ErrInvalidInput)
+	}
+	user, err := r.GetUserByID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	username, usernameKey := user.Username, user.UsernameKey
+	displayName := user.DisplayName
+	if update.Username != nil {
+		username, usernameKey, err = NormalizeUsername(*update.Username)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if update.DisplayName != nil {
+		displayName, err = NormalizeDisplayName(*update.DisplayName)
+		if err != nil {
+			return nil, err
+		}
+	}
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE users SET username = ?, username_key = ?, display_name = ?, updated_at = ?
+		WHERE id = ? AND state <> 'deleted'`, username, usernameKey,
+		nullIfEmpty(displayName), formatTime(r.now().UTC()), userID)
+	if err != nil {
+		return nil, classifyWriteError("update profile", err)
+	}
+	if changed, _ := result.RowsAffected(); changed != 1 {
 		return nil, ErrNotFound
 	}
 	return r.GetUserByID(ctx, userID)
