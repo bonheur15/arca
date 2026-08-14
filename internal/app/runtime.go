@@ -271,6 +271,9 @@ func registerJobs(runner *jobs.Runner, db *database.DB, uploadService *uploads.S
 				return err
 			}
 		}
+		if _, err := accounts.NewRepository(db.Writer()).PurgeRejectedAccessRequests(ctx, time.Now().UTC().Add(-30*24*time.Hour)); err != nil {
+			return err
+		}
 		_, err = runner.Enqueue(ctx, "storage.retention", map[string]any{}, time.Now().Add(24*time.Hour))
 		return err
 	})
