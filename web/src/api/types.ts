@@ -39,6 +39,7 @@ export interface User {
   createdAt: string;
   updatedAt: string;
   lastSignInAt: string | null;
+  deletionDueAt: string | null;
 }
 
 export interface Session {
