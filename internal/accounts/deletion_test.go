@@ -122,6 +122,16 @@ func TestDeletionPurgeQueuesBlobGCAndRetriesTransientIdentityFailure(t *testing.
 	if deletion.State != "completed" {
 		t.Fatalf("completed deletion = %#v", deletion)
 	}
+	if _, err := db.Writer().Exec(`UPDATE jobs SET state = 'completed' WHERE id = ?`, deletion.JobID); err != nil {
+		t.Fatal(err)
+	}
+	enqueuer := &recordingDeletionEnqueuer{}
+	if err := repository.EnqueueDueDeletionJobs(context.Background(), enqueuer); err != nil {
+		t.Fatal(err)
+	}
+	if len(enqueuer.calls) != 0 {
+		t.Fatalf("completed deletion was unexpectedly re-enqueued: %v", enqueuer.calls)
+	}
 }
 
 func TestDeletionRestoreCancelsJobAndExpiredWindowCannotRestore(t *testing.T) {
@@ -170,6 +180,91 @@ func TestDeletionFinalSuperadminAndPlanValidation(t *testing.T) {
 	member := createDeletionUser(t, repository, "plan-member", RoleMember, StateActive)
 	if _, err := service.ScheduleDeletion(context.Background(), member.ID, DeletionPlan{}, MutationContext{ActorID: admin.ID}); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("missing plan error = %v", err)
+	}
+}
+
+func TestDeletionAuditRetryDoesNotRepeatWorkOSDelete(t *testing.T) {
+	db := openDeletionTestDB(t)
+	repository := NewRepository(db.Writer())
+	now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	repository.now = func() time.Time { return now }
+	admin := createDeletionUser(t, repository, "admin-audit-retry", RoleSuperadmin, StateActive)
+	source := createDeletionUser(t, repository, "source-audit-retry", RoleMember, StateActive)
+	completeWorkOS(t, repository, source.ID, "workos_audit_retry")
+	service := NewService(repository, nil, nil, audit.NopRecorder{})
+	service.now = func() time.Time { return now }
+	if _, err := service.ScheduleDeletion(context.Background(), source.ID, DeletionPlan{Mode: DeletionPurge}, MutationContext{ActorID: admin.ID}); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(7 * 24 * time.Hour)
+	identity := &fakeDeletionIdentity{db: db.Writer(), sourceID: source.ID}
+	failingAudit := &flakyDeletionAudit{failures: 1}
+	processor := NewDeletionProcessor(repository, identity, fakeStagingCleaner{}, failingAudit)
+	if err := processor.Process(context.Background(), source.ID); err == nil {
+		t.Fatal("audit failure was ignored")
+	}
+	deletion, _ := repository.GetDeletion(context.Background(), source.ID)
+	if deletion.State != "local_complete" || identity.calls != 0 {
+		t.Fatalf("state=%q identity calls=%d", deletion.State, identity.calls)
+	}
+	if err := processor.Process(context.Background(), source.ID); err != nil {
+		t.Fatal(err)
+	}
+	if identity.calls != 1 {
+		t.Fatalf("identity calls after recovery=%d", identity.calls)
+	}
+	// Simulate final audit marker loss after WorkOS completion. The retry must
+	// append the audit marker without issuing another destructive remote call.
+	if _, err := db.Writer().Exec(`UPDATE account_deletions SET completed_audited_at = NULL WHERE user_id = ?`, source.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := processor.Process(context.Background(), source.ID); err != nil {
+		t.Fatal(err)
+	}
+	if identity.calls != 1 {
+		t.Fatalf("identity delete repeated during audit repair: calls=%d", identity.calls)
+	}
+}
+
+func TestDeletionPendingUploadReleasesReservationAndStaging(t *testing.T) {
+	db := openDeletionTestDB(t)
+	repository := NewRepository(db.Writer())
+	now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	repository.now = func() time.Time { return now }
+	admin := createDeletionUser(t, repository, "admin-upload-cleanup", RoleSuperadmin, StateActive)
+	source := createDeletionUser(t, repository, "source-upload-cleanup", RoleMember, StateActive)
+	completeWorkOS(t, repository, source.ID, "workos_upload_cleanup")
+	stamp := now.Format(time.RFC3339Nano)
+	if _, err := db.Writer().Exec(`INSERT INTO uploads
+		(id, actor_id, owner_id, parent_id, name, name_key, expected_bytes, committed_bytes,
+		reserved_bytes, staging_key, conflict_mode, state, expires_at, created_at, updated_at)
+		VALUES ('pending-deletion-upload', ?, ?, ?, 'pending.bin', 'pending.bin', 50, 0, 50,
+		'pending-deletion-upload', 'fail', 'pending', ?, ?, ?)`, source.ID, source.ID, source.RootNodeID, now.Add(24*time.Hour).Format(time.RFC3339Nano), stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Writer().Exec(`UPDATE users SET reserved_bytes = 50 WHERE id = ?`, source.ID); err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(repository, nil, nil, audit.NopRecorder{})
+	service.now = func() time.Time { return now }
+	if _, err := service.ScheduleDeletion(context.Background(), source.ID, DeletionPlan{Mode: DeletionPurge}, MutationContext{ActorID: admin.ID}); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(7 * 24 * time.Hour)
+	staging := &recordingStagingCleaner{}
+	if err := NewDeletionProcessor(repository, &fakeDeletionIdentity{}, staging, audit.NopRecorder{}).Process(context.Background(), source.ID); err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(staging.removed) != "[pending-deletion-upload]" {
+		t.Fatalf("removed staging = %v", staging.removed)
+	}
+	var uploadState string
+	var reserved int64
+	if err := db.Reader().QueryRow(`SELECT state FROM uploads WHERE id = 'pending-deletion-upload'`).Scan(&uploadState); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("terminal upload metadata remains state=%q err=%v", uploadState, err)
+	}
+	if err := db.Reader().QueryRow(`SELECT reserved_bytes FROM users WHERE id = ?`, source.ID).Scan(&reserved); err != nil || reserved != 0 {
+		t.Fatalf("reserved bytes=%d err=%v", reserved, err)
 	}
 }
 
@@ -253,6 +348,33 @@ func (f *fakeDeletionIdentity) DeleteUser(_ context.Context, _ string) error {
 type fakeStagingCleaner struct{}
 
 func (fakeStagingCleaner) RemoveStaging(string) error { return nil }
+
+type recordingStagingCleaner struct{ removed []string }
+
+func (s *recordingStagingCleaner) RemoveStaging(id string) error {
+	s.removed = append(s.removed, id)
+	return nil
+}
+
+type recordingDeletionEnqueuer struct{ calls []string }
+
+func (e *recordingDeletionEnqueuer) Enqueue(_ context.Context, kind string, payload any, _ time.Time) (string, error) {
+	e.calls = append(e.calls, fmt.Sprintf("%s:%v", kind, payload))
+	return fmt.Sprintf("replacement-job-%d", len(e.calls)), nil
+}
+
+type flakyDeletionAudit struct {
+	failures int
+	calls    int
+}
+
+func (a *flakyDeletionAudit) Record(context.Context, audit.Event) error {
+	a.calls++
+	if a.calls <= a.failures {
+		return errors.New("audit database unavailable")
+	}
+	return nil
+}
 
 func compactID(value string) string {
 	result := ""
