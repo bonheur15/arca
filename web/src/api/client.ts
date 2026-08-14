@@ -125,7 +125,11 @@ export function parseNode(value: unknown): ArcaNode {
     updatedAt: stringAt(record, new Date(0).toISOString(), "updatedAt", "updated_at"),
     capabilities: {
       read: booleanAt(capabilities, true, "read"),
-      write: booleanAt(capabilities, false, "write"),
+      write: booleanAt(capabilities,
+        booleanAt(capabilities, false, "rename") ||
+        booleanAt(capabilities, false, "move") ||
+        booleanAt(capabilities, false, "createChild", "create_child"),
+        "write"),
       share: booleanAt(capabilities, false, "share"),
       trash: booleanAt(capabilities, false, "trash"),
       purge: booleanAt(capabilities, false, "purge"),
@@ -138,7 +142,7 @@ function parsePreferences(value: unknown): UserPreferences {
   const theme = stringAt(record, "system", "themeMode", "theme_mode");
   const density = stringAt(record, "comfortable", "density");
   const accent = stringAt(record, "violet", "accent");
-  const allowedAccents = ["violet", "indigo", "blue", "teal", "green", "amber", "orange", "rose"] as const;
+  const allowedAccents = ["violet", "indigo", "blue", "cyan", "teal", "green", "amber", "rose"] as const;
   return {
     themeMode: theme === "light" || theme === "dark" ? theme : "system",
     accent: allowedAccents.find((candidate) => candidate === accent) ?? "violet",
@@ -182,9 +186,26 @@ function parseList<T>(value: unknown, parser: (entry: unknown) => T): T[] {
   return entries.map(parser);
 }
 
-function csrfToken(): string | null {
+let activeCsrfToken: string | null = null;
+
+function cookieValue(name: string): string | null {
+  const entry = document.cookie.split(";").map((part) => part.trim()).find((part) => part.startsWith(`${name}=`));
+  if (!entry) return null;
+  try {
+    return decodeURIComponent(entry.slice(name.length + 1));
+  } catch {
+    return null;
+  }
+}
+
+export function getCsrfToken(): string | null {
   const meta = document.querySelector<HTMLMetaElement>('meta[name="arca-csrf"]');
-  return meta?.content || null;
+  return activeCsrfToken || meta?.content || cookieValue("__Host-arca_csrf") || cookieValue("arca_csrf");
+}
+
+function rememberCsrf(session: Session): Session {
+  if (session.csrfToken) activeCsrfToken = session.csrfToken;
+  return session;
 }
 
 interface RequestOptions extends Omit<RequestInit, "body"> {
@@ -193,19 +214,20 @@ interface RequestOptions extends Omit<RequestInit, "body"> {
 }
 
 async function apiRequest(path: string, options: RequestOptions = {}): Promise<unknown> {
+  const { body: jsonBody, rawBody, ...requestInit } = options;
   const headers = new Headers(options.headers);
-  const token = csrfToken();
+  const token = getCsrfToken();
   if (token && options.method && !["GET", "HEAD", "OPTIONS"].includes(options.method.toUpperCase())) {
     headers.set("X-CSRF-Token", token);
   }
-  let body: BodyInit | undefined = options.rawBody;
-  if (options.body !== undefined) {
+  let body: BodyInit | undefined = rawBody;
+  if (jsonBody !== undefined) {
     headers.set("Content-Type", "application/json");
-    body = JSON.stringify(options.body);
+    body = JSON.stringify(jsonBody);
   }
   headers.set("Accept", "application/json");
   const response = await fetch(`/api/v1${path}`, {
-    ...options,
+    ...requestInit,
     headers,
     ...(body === undefined ? {} : { body }),
     credentials: "same-origin",
@@ -330,11 +352,11 @@ export const api = {
 
   validateSetupCode: (code: string) => apiRequest("/bootstrap/validate", { method: "POST", body: { code } }),
   setupStart: (input: JsonRecord) => apiRequest("/bootstrap/start", { method: "POST", body: input }),
-  setupVerify: (input: JsonRecord) => apiRequest("/bootstrap/verify", { method: "POST", body: input }),
+  setupVerify: async (input: JsonRecord) => rememberCsrf(parseSession(await apiRequest("/bootstrap/verify", { method: "POST", body: input }))),
 
-  session: async () => parseSession(await apiRequest("/session")),
+  session: async () => rememberCsrf(parseSession(await apiRequest("/session"))),
   startMagicAuth: (email: string) => apiRequest("/auth/magic/start", { method: "POST", body: { email } }),
-  verifyMagicAuth: async (code: string) => parseSession(await apiRequest("/auth/magic/verify", { method: "POST", body: { code } })),
+  verifyMagicAuth: async (code: string) => rememberCsrf(parseSession(await apiRequest("/auth/magic/verify", { method: "POST", body: { code } }))),
   logout: () => apiRequest("/auth/logout", { method: "POST" }),
   async sessions(): Promise<SessionRecord[]> {
     return parseList(await apiRequest("/sessions"), (entry) => {
@@ -343,9 +365,9 @@ export const api = {
         id: stringAt(record, "", "id"),
         userAgent: stringAt(record, "Unknown device", "userAgent", "user_agent"),
         ipAddress: nullableStringAt(record, "ipAddress", "ip_address"),
-        current: booleanAt(record, false, "current", "is_current"),
+        current: booleanAt(record, stringAt(record, "", "status") === "current", "current", "is_current"),
         createdAt: stringAt(record, "", "createdAt", "created_at"),
-        lastActiveAt: stringAt(record, "", "lastActiveAt", "last_active_at"),
+        lastActiveAt: stringAt(record, "", "lastActiveAt", "last_active_at", "updatedAt", "updated_at"),
         expiresAt: nullableStringAt(record, "expiresAt", "expires_at"),
       };
     });
@@ -385,6 +407,7 @@ export const api = {
   createFolder: async (input: { parentId: string | null; name: string }) => parseNode(unwrap(await apiRequest("/folders", { method: "POST", body: input }))),
   renameNode: async (id: string, name: string, revision: number) => parseNode(unwrap(await apiRequest(`/nodes/${id}`, { method: "PATCH", headers: { "If-Match": `\"${revision}\"` }, body: { name } }))),
   moveNode: (id: string, parentId: string | null, revision: number) => apiRequest(`/nodes/${id}/move`, { method: "POST", headers: { "If-Match": `\"${revision}\"`, "Idempotency-Key": crypto.randomUUID() }, body: { parentId } }),
+  copyNode: (id: string, parentId: string | null, revision: number) => apiRequest(`/nodes/${id}/copy`, { method: "POST", headers: { "If-Match": `\"${revision}\"`, "Idempotency-Key": crypto.randomUUID() }, body: { parentId } }),
   trashNode: (id: string, revision: number) => apiRequest(`/nodes/${id}/trash`, { method: "POST", headers: { "If-Match": `\"${revision}\"`, "Idempotency-Key": crypto.randomUUID() } }),
   restoreNode: (id: string, revision: number) => apiRequest(`/nodes/${id}/restore`, { method: "POST", headers: { "If-Match": `\"${revision}\"`, "Idempotency-Key": crypto.randomUUID() } }),
   purgeNode: (id: string, revision: number) => apiRequest(`/nodes/${id}/purge`, { method: "POST", headers: { "If-Match": `\"${revision}\"`, "Idempotency-Key": crypto.randomUUID() } }),
@@ -494,6 +517,7 @@ export const api = {
   },
   decideRequest: (id: string, input: JsonRecord) => apiRequest(`/admin/requests/${id}`, { method: "POST", body: input }),
   updateUser: async (id: string, input: JsonRecord) => parseUser(unwrap(await apiRequest(`/admin/users/${id}`, { method: "PATCH", body: input }))),
+  startSupportAccess: (targetUserId: string, reason: string) => apiRequest("/admin/support-access", { method: "POST", body: { targetUserId, reason } }),
   async storageOverview(): Promise<StorageOverview> {
     const record = object(unwrap(await apiRequest("/admin/storage")));
     return {
