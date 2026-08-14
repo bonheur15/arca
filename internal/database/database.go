@@ -58,12 +58,8 @@ func Open(ctx context.Context, cfg Config) (*DB, error) {
 	if err := validateLocalFilesystem(filepath.Dir(abs)); err != nil {
 		return nil, err
 	}
-	if info, err := os.Lstat(abs); err == nil {
-		if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-			return nil, fmt.Errorf("database path %q must be a regular file", abs)
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("inspect database path: %w", err)
+	if err := validateSQLitePaths(abs); err != nil {
+		return nil, err
 	}
 
 	writer, err := sql.Open("sqlite", sqliteDSN(abs, false))
@@ -97,8 +93,8 @@ func Open(ctx context.Context, cfg Config) (*DB, error) {
 			return nil, err
 		}
 	}
-	if err := os.Chmod(abs, 0o600); err != nil {
-		return nil, fmt.Errorf("secure database file: %w", err)
+	if err := secureSQLitePaths(abs); err != nil {
+		return nil, err
 	}
 
 	reads := cfg.MaxReadConns
@@ -127,6 +123,31 @@ func Open(ctx context.Context, cfg Config) (*DB, error) {
 	cleanupWriter = false
 	cleanupReader = false
 	return &DB{writer: writer, reader: reader, path: abs, version: version}, nil
+}
+
+func validateSQLitePaths(databasePath string) error {
+	for _, path := range []string{databasePath, databasePath + "-wal", databasePath + "-shm", databasePath + "-journal"} {
+		info, err := os.Lstat(path)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("inspect SQLite path %q: %w", path, err)
+		}
+		if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("SQLite path %q must be a regular file", path)
+		}
+	}
+	return nil
+}
+
+func secureSQLitePaths(databasePath string) error {
+	for _, path := range []string{databasePath, databasePath + "-wal", databasePath + "-shm"} {
+		if err := os.Chmod(path, 0o600); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("secure SQLite file %q: %w", path, err)
+		}
+	}
+	return nil
 }
 
 func sqliteDSN(path string, readOnly bool) string {
