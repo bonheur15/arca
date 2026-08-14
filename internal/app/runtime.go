@@ -159,7 +159,8 @@ func Open(ctx context.Context, cfg config.Runtime, version string, logger *slog.
 		return cleanup(err)
 	}
 	jobRunner := jobs.New(db.Writer(), logger)
-	registerJobs(jobRunner, db, uploadService, fileService)
+	deletionProcessor := accounts.NewDeletionProcessor(repository, dynamicProvider, storage, recorder)
+	registerJobs(jobRunner, db, uploadService, fileService, deletionProcessor)
 	bootstrapService, setupCode, err := NewBootstrap(&cfg, db.Writer(), accountService, authService, dynamicProvider, initialized, logger)
 	if err != nil {
 		return cleanup(err)
@@ -216,7 +217,7 @@ func loadInstanceSettings(ctx context.Context, db *database.DB, cfg *config.Runt
 	return nil
 }
 
-func registerJobs(runner *jobs.Runner, db *database.DB, uploadService *uploads.Service, fileService *files.Service) {
+func registerJobs(runner *jobs.Runner, db *database.DB, uploadService *uploads.Service, fileService *files.Service, deletionProcessor *accounts.DeletionProcessor) {
 	runner.Register("uploads.reconcile", func(ctx context.Context, _ json.RawMessage) error {
 		return uploadService.Reconcile(ctx)
 	})
@@ -241,6 +242,7 @@ func registerJobs(runner *jobs.Runner, db *database.DB, uploadService *uploads.S
 		_, err := uploadService.CollectGarbage(ctx, 500)
 		return err
 	})
+	runner.Register(accounts.DeletionJobKind, deletionProcessor.HandleJob)
 	runner.Register("storage.retention", func(ctx context.Context, _ json.RawMessage) error {
 		rows, err := db.Reader().QueryContext(ctx, `SELECT id FROM users WHERE state <> 'deleted' ORDER BY id`)
 		if err != nil {
@@ -279,6 +281,30 @@ func registerJobs(runner *jobs.Runner, db *database.DB, uploadService *uploads.S
 func (r *Runtime) StartBackground(parent context.Context) error {
 	if err := r.Uploads.Reconcile(parent); err != nil {
 		return fmt.Errorf("reconcile uploads: %w", err)
+	}
+	rows, err := r.Database.Reader().QueryContext(parent, `SELECT id FROM users WHERE state <> 'deleted' ORDER BY id`)
+	if err != nil {
+		return fmt.Errorf("list users for startup quota reconciliation: %w", err)
+	}
+	var ownerIDs []string
+	for rows.Next() {
+		var ownerID string
+		if err := rows.Scan(&ownerID); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan user for startup quota reconciliation: %w", err)
+		}
+		ownerIDs = append(ownerIDs, ownerID)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close startup quota reconciliation rows: %w", err)
+	}
+	for _, ownerID := range ownerIDs {
+		if _, err := r.Files.ReconcileQuota(parent, ownerID); err != nil {
+			return fmt.Errorf("reconcile startup quota for %s: %w", ownerID, err)
+		}
+	}
+	if err := r.AccountRepo.EnqueueDueDeletionJobs(parent, r.Jobs); err != nil {
+		return fmt.Errorf("reconcile account deletion jobs: %w", err)
 	}
 	for _, kind := range []string{"uploads.expire", "public_shares.cleanup", "blobs.gc", "storage.retention"} {
 		var pending int
