@@ -157,7 +157,7 @@ func (s *Server) routes() chi.Router {
 			private.Delete("/public-shares/{shareID}", s.revokePublicShare)
 
 			private.Get("/tokens", s.listTokens)
-			private.Post("/tokens", s.createToken)
+			private.With(s.rate("token-create", Limit{Capacity: 10, Window: time.Hour})).Post("/tokens", s.createToken)
 			private.Delete("/tokens/{tokenID}", s.revokeToken)
 			private.Get("/notifications", s.notifications)
 			private.Get("/events", s.events.ServeHTTP)
