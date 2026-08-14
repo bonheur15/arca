@@ -33,6 +33,8 @@ type Service struct {
 	now     func() time.Time
 }
 
+const backupLeaseName = "backup"
+
 type Manifest struct {
 	FormatVersion int            `json:"format_version"`
 	ArcaVersion   string         `json:"arca_version"`
@@ -69,6 +71,10 @@ func (s *Service) Create(ctx context.Context, destination string) (Manifest, err
 	if s.db == nil {
 		return Manifest{}, errors.New("backup database is required")
 	}
+	if err := s.acquireLease(ctx); err != nil {
+		return Manifest{}, err
+	}
+	defer s.releaseLease()
 	abs, err := filepath.Abs(destination)
 	if err != nil {
 		return Manifest{}, err
@@ -155,6 +161,27 @@ func (s *Service) Create(ctx context.Context, destination string) (Manifest, err
 	}
 	committed = true
 	return manifest, nil
+}
+
+func (s *Service) acquireLease(ctx context.Context) error {
+	now := s.now().UTC()
+	result, err := s.db.ExecContext(ctx, `INSERT INTO operation_leases(name, lease_until, owner, created_at, updated_at)
+		VALUES(?, ?, ?, ?, ?)
+		ON CONFLICT(name) DO UPDATE SET lease_until=excluded.lease_until, owner=excluded.owner, updated_at=excluded.updated_at
+		WHERE operation_leases.lease_until <= ?`, backupLeaseName, now.Add(24*time.Hour).Format(time.RFC3339Nano), fmt.Sprintf("pid:%d", os.Getpid()), now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
+	if err != nil {
+		return fmt.Errorf("acquire backup lease: %w", err)
+	}
+	if affected, _ := result.RowsAffected(); affected != 1 {
+		return errors.New("another backup is already in progress")
+	}
+	return nil
+}
+
+func (s *Service) releaseLease() {
+	if s.db != nil {
+		_, _ = s.db.Exec(`DELETE FROM operation_leases WHERE name = ?`, backupLeaseName)
+	}
 }
 
 func Verify(ctx context.Context, source string) (Manifest, error) {
