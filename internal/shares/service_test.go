@@ -61,6 +61,13 @@ func TestInternalPermissionInheritance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var notifications int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM notifications WHERE user_id = ? AND kind = 'share.created'`, recipient).Scan(&notifications); err != nil {
+		t.Fatal(err)
+	}
+	if notifications != 1 {
+		t.Fatalf("share notifications = %d, want 1", notifications)
+	}
 	permission, err := service.PermissionForNode(context.Background(), recipient, child)
 	if err != nil || permission != PermissionViewer {
 		t.Fatalf("permission = %q, %v", permission, err)
