@@ -256,6 +256,7 @@ export interface InstanceSettings {
   allowAccessRequests: boolean;
   filesystemReserveBytes: number;
   trustedProxyCidrs: string[];
+  allowedCorsOrigins: string[];
 }
 
 export interface Policy {
