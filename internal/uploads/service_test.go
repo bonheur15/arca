@@ -19,6 +19,13 @@ import (
 
 var uploadTestNow = time.Date(2026, 8, 14, 15, 0, 0, 0, time.UTC)
 
+type fixedFreeStorage struct {
+	*LocalStorage
+	free int64
+}
+
+func (s *fixedFreeStorage) FreeBytes() (int64, error) { return s.free, nil }
+
 func uploadTestFixture(t *testing.T, quota int64) (*database.DB, *LocalStorage, *files.Service, string) {
 	t.Helper()
 	dataDir := t.TempDir()
@@ -499,4 +506,72 @@ func TestReplacementFailsWhenRevisionChanges(t *testing.T) {
 	if err := db.Reader().QueryRow("SELECT reserved_bytes FROM users WHERE id = 'uploader'").Scan(&reserved); err != nil || reserved != 0 {
 		t.Fatalf("replacement reservation = %d, error = %v", reserved, err)
 	}
+}
+
+func TestHostDiskReservationsAndPatchReserve(t *testing.T) {
+	db, local, _, rootID := uploadTestFixture(t, 100)
+	storage := &fixedFreeStorage{LocalStorage: local, free: 10}
+	service := newUploadService(db, storage, nil)
+	first, err := service.Create(context.Background(), CreateRequest{
+		ActorID: "uploader", ParentID: rootID, Name: "first.bin", ExpectedBytes: 7,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Create(context.Background(), CreateRequest{
+		ActorID: "uploader", ParentID: rootID, Name: "second.bin", ExpectedBytes: 4,
+	}); files.ErrorCodeOf(err) != files.CodeDiskFull {
+		t.Fatalf("over-reserved host disk error = %v", err)
+	}
+	storage.free = 2
+	if _, err := service.Patch(context.Background(), PatchRequest{
+		ActorID: "uploader", UploadID: first.ID, Offset: 0, ContentLength: 3, Body: bytes.NewReader([]byte("abc")),
+	}); files.ErrorCodeOf(err) != files.CodeDiskFull {
+		t.Fatalf("disk reserve patch error = %v", err)
+	}
+	if size, err := storage.StagingSize(first.ID); err != nil || size != 0 {
+		t.Fatalf("disk-full staging size = %d, error = %v", size, err)
+	}
+}
+
+func TestPendingUploadReservesItemCapacity(t *testing.T) {
+	db, storage, fileService, rootID := uploadTestFixture(t, 100)
+	if _, err := db.Writer().Exec("UPDATE user_policies SET max_items = 1 WHERE user_id = 'uploader'"); err != nil {
+		t.Fatal(err)
+	}
+	service := newUploadService(db, storage, nil)
+	if _, err := service.Create(context.Background(), CreateRequest{
+		ActorID: "uploader", ParentID: rootID, Name: "reserved.bin", ExpectedBytes: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Create(context.Background(), CreateRequest{
+		ActorID: "uploader", ParentID: rootID, Name: "too-many.bin", ExpectedBytes: 1,
+	}); files.ErrorCodeOf(err) != files.CodeItemLimit {
+		t.Fatalf("second item reservation error = %v", err)
+	}
+	if _, err := fileService.CreateFolder(context.Background(), "uploader", rootID, "Too many"); files.ErrorCodeOf(err) != files.CodeItemLimit {
+		t.Fatalf("folder ignored pending item reservation: %v", err)
+	}
+}
+
+func TestConcurrentTransferLimit(t *testing.T) {
+	db, storage, _, _ := uploadTestFixture(t, 100)
+	if _, err := db.Writer().Exec("UPDATE user_policies SET max_concurrent_uploads = 1 WHERE user_id = 'uploader'"); err != nil {
+		t.Fatal(err)
+	}
+	service := newUploadService(db, storage, nil)
+	release, err := service.beginTransfer(context.Background(), "uploader")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.beginTransfer(context.Background(), "uploader"); files.ErrorCodeOf(err) != files.CodeUploadLimit {
+		t.Fatalf("concurrent transfer error = %v", err)
+	}
+	release()
+	releaseAgain, err := service.beginTransfer(context.Background(), "uploader")
+	if err != nil {
+		t.Fatal(err)
+	}
+	releaseAgain()
 }
