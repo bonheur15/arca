@@ -121,6 +121,25 @@ func TestLastActiveSuperadminInvariant(t *testing.T) {
 	}
 }
 
+func TestDeletedExternalIdentitySuspendsEvenFinalSuperadmin(t *testing.T) {
+	db := openTestDB(t)
+	repository := NewRepository(db.Writer())
+	admin, err := repository.CreateUser(context.Background(), CreateUserParams{
+		Username: "admin", Email: "admin@example.com", Role: RoleSuperadmin,
+		State: StateProvisioning, QuotaBytes: 1, Policy: DefaultPolicy(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.CompleteProvisioning(context.Background(), admin.ID, "workos_admin"); err != nil {
+		t.Fatal(err)
+	}
+	admin, err = repository.SuspendIdentityDeleted(context.Background(), "workos_admin")
+	if err != nil || admin.State != StateSuspended {
+		t.Fatalf("admin = %#v, err = %v", admin, err)
+	}
+}
+
 func TestQuotaUpdateSetsAndClearsOverQuota(t *testing.T) {
 	db := openTestDB(t)
 	repository := NewRepository(db.Writer())
