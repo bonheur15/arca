@@ -511,4 +511,3 @@ func cloneHeader(destination, source http.Header) {
 }
 
 var _ = json.Valid
-
