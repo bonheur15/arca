@@ -113,6 +113,7 @@ func (s *Server) routes() chi.Router {
 			private.Post("/folders", s.createFolder)
 			private.Patch("/nodes/{nodeID}", s.renameNode)
 			private.With(s.idempotent).Post("/nodes/{nodeID}/move", s.moveNode)
+			private.With(s.idempotent).Post("/nodes/{nodeID}/copy", s.copyNode)
 			private.With(s.idempotent).Post("/nodes/{nodeID}/trash", s.trashNode)
 			private.With(s.idempotent).Post("/nodes/{nodeID}/restore", s.restoreNode)
 			private.With(s.idempotent).Post("/nodes/{nodeID}/purge", s.purgeNode)
@@ -449,6 +450,18 @@ func (s *Server) handleError(w http.ResponseWriter, r *http.Request, err error) 
 		WriteProblem(w, r, http.StatusConflict, "conflict", "Conflict", err.Error())
 	case errors.Is(err, accounts.ErrInvalidInput), errors.Is(err, shares.ErrInvalid):
 		WriteProblem(w, r, http.StatusBadRequest, "invalid_request", "Invalid request", err.Error())
+	case errors.Is(err, auth.ErrRateLimited):
+		retryAfter := 60
+		var limited *auth.RateLimitError
+		if errors.As(err, &limited) && limited.RetryAfter > 0 {
+			retryAfter = int(limited.RetryAfter.Seconds()) + 1
+		}
+		w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
+		WriteProblemObject(w, Problem{Status: http.StatusTooManyRequests, Code: "rate_limited", Title: "Too many requests", RequestID: RequestID(r.Context()), RetryAfter: retryAfter})
+	case errors.Is(err, auth.ErrSessionUnavailable):
+		WriteProblem(w, r, http.StatusServiceUnavailable, "authentication_unavailable", "Authentication temporarily unavailable", "Your session was preserved. Try again shortly.")
+	case errors.Is(err, accounts.ErrAuditFailed):
+		WriteProblem(w, r, http.StatusInternalServerError, "audit_recording_failed", "Operation committed with an audit error", "The change was saved, but its audit event could not be recorded. Do not retry blindly.")
 	case errors.Is(err, accounts.ErrInvalidStatusToken), errors.Is(err, auth.ErrInvalidCredentials), errors.Is(err, auth.ErrUnauthenticated), errors.Is(err, auth.ErrInvalidToken):
 		WriteProblem(w, r, http.StatusUnauthorized, "invalid_credentials", "Invalid credentials", "The supplied credentials are invalid or expired.")
 	case errors.Is(err, shares.ErrPublicUnavailable):
