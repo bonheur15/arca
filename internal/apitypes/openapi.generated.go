@@ -33,6 +33,38 @@ const (
 	System PreferencesThemeMode = "system"
 )
 
+// Defines values for PublicShareState.
+const (
+	PublicShareStateActive    PublicShareState = "active"
+	PublicShareStateExhausted PublicShareState = "exhausted"
+	PublicShareStateExpired   PublicShareState = "expired"
+	PublicShareStateRevoked   PublicShareState = "revoked"
+)
+
+// Defines values for SharePermission.
+const (
+	Editor SharePermission = "editor"
+	Viewer SharePermission = "viewer"
+)
+
+// Defines values for UploadConflictMode.
+const (
+	Error    UploadConflictMode = "error"
+	KeepBoth UploadConflictMode = "keep_both"
+	Replace  UploadConflictMode = "replace"
+)
+
+// Defines values for UploadState.
+const (
+	UploadStateCancelled  UploadState = "cancelled"
+	UploadStateCompleted  UploadState = "completed"
+	UploadStateExpired    UploadState = "expired"
+	UploadStateFailed     UploadState = "failed"
+	UploadStateFinalizing UploadState = "finalizing"
+	UploadStatePending    UploadState = "pending"
+	UploadStateReceiving  UploadState = "receiving"
+)
+
 // Defines values for UserRole.
 const (
 	Member     UserRole = "member"
@@ -49,20 +81,23 @@ const (
 	Suspended       UserState = "suspended"
 )
 
-// Defines values for AdminDecideRequestParamsDecision.
+// Defines values for AdminListAuditEventsParamsFormat.
 const (
-	Approve AdminDecideRequestParamsDecision = "approve"
-	Reject  AdminDecideRequestParamsDecision = "reject"
+	Csv  AdminListAuditEventsParamsFormat = "csv"
+	Json AdminListAuditEventsParamsFormat = "json"
 )
 
-// Defines values for AdminGetResourceParamsResource.
-const (
-	Audit    AdminGetResourceParamsResource = "audit"
-	Jobs     AdminGetResourceParamsResource = "jobs"
-	Policies AdminGetResourceParamsResource = "policies"
-	Settings AdminGetResourceParamsResource = "settings"
-	Storage  AdminGetResourceParamsResource = "storage"
-)
+// FileVersion defines model for FileVersion.
+type FileVersion struct {
+	CreatedAt time.Time          `json:"created_at"`
+	CreatedBy openapi_types.UUID `json:"created_by"`
+	Id        openapi_types.UUID `json:"id"`
+	MimeType  string             `json:"mime_type"`
+	NodeId    openapi_types.UUID `json:"node_id"`
+	Sequence  int64              `json:"sequence"`
+	Sha256    string             `json:"sha256"`
+	SizeBytes int64              `json:"size_bytes"`
+}
 
 // List defines model for List.
 type List struct {
@@ -88,6 +123,23 @@ type Node struct {
 
 // NodeKind defines model for Node.Kind.
 type NodeKind string
+
+// Policy defines model for Policy.
+type Policy struct {
+	AllowApiTokens        bool      `json:"allow_api_tokens"`
+	AllowInternalSharing  bool      `json:"allow_internal_sharing"`
+	AllowPublicSharing    bool      `json:"allow_public_sharing"`
+	BlockedExtensions     *[]string `json:"blocked_extensions,omitempty"`
+	MaxActivePublicShares *int      `json:"max_active_public_shares,omitempty"`
+	MaxConcurrentUploads  *int      `json:"max_concurrent_uploads,omitempty"`
+	MaxFileBytes          *int64    `json:"max_file_bytes,omitempty"`
+	MaxItems              *int64    `json:"max_items,omitempty"`
+	MaxPendingUploads     *int      `json:"max_pending_uploads,omitempty"`
+	MaxPublicRedemptions  *int      `json:"max_public_redemptions,omitempty"`
+	MaxPublicTtlMinutes   *int      `json:"max_public_ttl_minutes,omitempty"`
+	QuotaBytes            int64     `json:"quota_bytes"`
+	Unlimited             bool      `json:"unlimited"`
+}
 
 // Preferences defines model for Preferences.
 type Preferences struct {
@@ -115,12 +167,63 @@ type Problem struct {
 	Type        string             `json:"type"`
 }
 
+// PublicShare defines model for PublicShare.
+type PublicShare struct {
+	CreatedAt       time.Time          `json:"created_at"`
+	ExpiresAt       time.Time          `json:"expires_at"`
+	Id              openapi_types.UUID `json:"id"`
+	RedemptionCount int                `json:"redemption_count"`
+	RedemptionLimit int                `json:"redemption_limit"`
+	Roots           []Node             `json:"roots"`
+	State           PublicShareState   `json:"state"`
+}
+
+// PublicShareState defines model for PublicShare.State.
+type PublicShareState string
+
 // Session defines model for Session.
 type Session struct {
 	Authenticated bool    `json:"authenticated"`
 	CsrfToken     *string `json:"csrf_token,omitempty"`
 	User          *User   `json:"user,omitempty"`
 }
+
+// Share defines model for Share.
+type Share struct {
+	AllowEditorUploads  *bool              `json:"allow_editor_uploads,omitempty"`
+	CreatedAt           time.Time          `json:"created_at"`
+	CreatedBy           openapi_types.UUID `json:"created_by"`
+	EditorByteAllowance *int64             `json:"editor_byte_allowance"`
+	ExpiresAt           *time.Time         `json:"expires_at"`
+	Id                  openapi_types.UUID `json:"id"`
+	Permission          SharePermission    `json:"permission"`
+	Recipients          []User             `json:"recipients"`
+	Roots               []Node             `json:"roots"`
+	UpdatedAt           time.Time          `json:"updated_at"`
+}
+
+// SharePermission defines model for Share.Permission.
+type SharePermission string
+
+// Upload defines model for Upload.
+type Upload struct {
+	CommittedBytes   int64               `json:"committed_bytes"`
+	ConflictMode     UploadConflictMode  `json:"conflict_mode"`
+	CurrentVersionId *openapi_types.UUID `json:"current_version_id"`
+	ExpectedBytes    int64               `json:"expected_bytes"`
+	ExpiresAt        time.Time           `json:"expires_at"`
+	Filename         string              `json:"filename"`
+	Id               openapi_types.UUID  `json:"id"`
+	NodeId           *openapi_types.UUID `json:"node_id"`
+	ParentId         openapi_types.UUID  `json:"parent_id"`
+	State            UploadState         `json:"state"`
+}
+
+// UploadConflictMode defines model for Upload.ConflictMode.
+type UploadConflictMode string
+
+// UploadState defines model for Upload.State.
+type UploadState string
 
 // User defines model for User.
 type User struct {
@@ -180,14 +283,31 @@ type JSON map[string]interface{}
 // RequestAccessJSONBody defines parameters for RequestAccess.
 type RequestAccessJSONBody map[string]interface{}
 
-// GetAccessRequestStatusJSONBody defines parameters for GetAccessRequestStatus.
-type GetAccessRequestStatusJSONBody map[string]interface{}
+// GetAccessRequestStatusParams defines parameters for GetAccessRequestStatus.
+type GetAccessRequestStatusParams struct {
+	Token string `form:"token" json:"token"`
+}
+
+// AdminListAuditEventsParams defines parameters for AdminListAuditEvents.
+type AdminListAuditEventsParams struct {
+	Limit  *Limit                            `form:"limit,omitempty" json:"limit,omitempty"`
+	Format *AdminListAuditEventsParamsFormat `form:"format,omitempty" json:"format,omitempty"`
+}
+
+// AdminListAuditEventsParamsFormat defines parameters for AdminListAuditEvents.
+type AdminListAuditEventsParamsFormat string
+
+// AdminUpdatePolicyJSONBody defines parameters for AdminUpdatePolicy.
+type AdminUpdatePolicyJSONBody map[string]interface{}
 
 // AdminDecideRequestJSONBody defines parameters for AdminDecideRequest.
 type AdminDecideRequestJSONBody map[string]interface{}
 
-// AdminDecideRequestParamsDecision defines parameters for AdminDecideRequest.
-type AdminDecideRequestParamsDecision string
+// AdminUpdateSettingsJSONBody defines parameters for AdminUpdateSettings.
+type AdminUpdateSettingsJSONBody map[string]interface{}
+
+// AdminStartSupportAccessJSONBody defines parameters for AdminStartSupportAccess.
+type AdminStartSupportAccessJSONBody map[string]interface{}
 
 // AdminCreateUserJSONBody defines parameters for AdminCreateUser.
 type AdminCreateUserJSONBody map[string]interface{}
@@ -200,9 +320,6 @@ type AdminUpdateUserParams struct {
 	IfMatch IfMatch `json:"If-Match"`
 }
 
-// AdminGetResourceParamsResource defines parameters for AdminGetResource.
-type AdminGetResourceParamsResource string
-
 // StartMagicAuthJSONBody defines parameters for StartMagicAuth.
 type StartMagicAuthJSONBody struct {
 	Email openapi_types.Email `json:"email"`
@@ -213,17 +330,25 @@ type VerifyMagicAuthJSONBody struct {
 	Code string `json:"code"`
 }
 
-// ConfigureBootstrapJSONBody defines parameters for ConfigureBootstrap.
-type ConfigureBootstrapJSONBody map[string]interface{}
+// StartBootstrapJSONBody defines parameters for StartBootstrap.
+type StartBootstrapJSONBody map[string]interface{}
+
+// ValidateBootstrapCodeJSONBody defines parameters for ValidateBootstrapCode.
+type ValidateBootstrapCodeJSONBody map[string]interface{}
 
 // VerifyBootstrapJSONBody defines parameters for VerifyBootstrap.
 type VerifyBootstrapJSONBody map[string]interface{}
 
-// AddFavoriteJSONBody defines parameters for AddFavorite.
-type AddFavoriteJSONBody map[string]interface{}
+// RestoreFileVersionParams defines parameters for RestoreFileVersion.
+type RestoreFileVersionParams struct {
+	IfMatch IfMatch `json:"If-Match"`
+}
 
 // CreateFolderJSONBody defines parameters for CreateFolder.
 type CreateFolderJSONBody map[string]interface{}
+
+// UpdateMeJSONBody defines parameters for UpdateMe.
+type UpdateMeJSONBody map[string]interface{}
 
 // UpdatePreferencesJSONBody defines parameters for UpdatePreferences.
 type UpdatePreferencesJSONBody map[string]interface{}
@@ -231,9 +356,15 @@ type UpdatePreferencesJSONBody map[string]interface{}
 // ListNodesParams defines parameters for ListNodes.
 type ListNodesParams struct {
 	ParentId *openapi_types.UUID `form:"parent_id,omitempty" json:"parent_id,omitempty"`
-	Cursor   *Cursor             `form:"cursor,omitempty" json:"cursor,omitempty"`
-	Limit    *Limit              `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// SupportUser Target user for an active audited support session.
+	SupportUser *openapi_types.UUID `form:"support_user,omitempty" json:"support_user,omitempty"`
+	Cursor      *Cursor             `form:"cursor,omitempty" json:"cursor,omitempty"`
+	Limit       *Limit              `form:"limit,omitempty" json:"limit,omitempty"`
 }
+
+// DownloadNodeArchiveJSONBody defines parameters for DownloadNodeArchive.
+type DownloadNodeArchiveJSONBody map[string]interface{}
 
 // BulkMutateNodesJSONBody defines parameters for BulkMutateNodes.
 type BulkMutateNodesJSONBody map[string]interface{}
@@ -246,12 +377,51 @@ type UpdateNodeParams struct {
 	IfMatch IfMatch `json:"If-Match"`
 }
 
-// MutateNodeJSONBody defines parameters for MutateNode.
-type MutateNodeJSONBody map[string]interface{}
+// CopyNodeJSONBody defines parameters for CopyNode.
+type CopyNodeJSONBody map[string]interface{}
 
-// MutateNodeParams defines parameters for MutateNode.
-type MutateNodeParams struct {
-	IfMatch IfMatch `json:"If-Match"`
+// CopyNodeParams defines parameters for CopyNode.
+type CopyNodeParams struct {
+	IfMatch        IfMatch        `json:"If-Match"`
+	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
+}
+
+// MoveNodeJSONBody defines parameters for MoveNode.
+type MoveNodeJSONBody map[string]interface{}
+
+// MoveNodeParams defines parameters for MoveNode.
+type MoveNodeParams struct {
+	IfMatch        IfMatch        `json:"If-Match"`
+	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
+}
+
+// PurgeNodeParams defines parameters for PurgeNode.
+type PurgeNodeParams struct {
+	IfMatch        IfMatch        `json:"If-Match"`
+	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
+}
+
+// RestoreNodeJSONBody defines parameters for RestoreNode.
+type RestoreNodeJSONBody map[string]interface{}
+
+// RestoreNodeParams defines parameters for RestoreNode.
+type RestoreNodeParams struct {
+	IfMatch        IfMatch        `json:"If-Match"`
+	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
+}
+
+// SaveSharedFileCopyJSONBody defines parameters for SaveSharedFileCopy.
+type SaveSharedFileCopyJSONBody map[string]interface{}
+
+// SaveSharedFileCopyParams defines parameters for SaveSharedFileCopy.
+type SaveSharedFileCopyParams struct {
+	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
+}
+
+// TrashNodeParams defines parameters for TrashNode.
+type TrashNodeParams struct {
+	IfMatch        IfMatch        `json:"If-Match"`
+	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
 }
 
 // CreatePublicShareJSONBody defines parameters for CreatePublicShare.
@@ -299,11 +469,17 @@ type LookupUsersParams struct {
 // RequestAccessJSONRequestBody defines body for RequestAccess for application/json ContentType.
 type RequestAccessJSONRequestBody RequestAccessJSONBody
 
-// GetAccessRequestStatusJSONRequestBody defines body for GetAccessRequestStatus for application/json ContentType.
-type GetAccessRequestStatusJSONRequestBody GetAccessRequestStatusJSONBody
+// AdminUpdatePolicyJSONRequestBody defines body for AdminUpdatePolicy for application/json ContentType.
+type AdminUpdatePolicyJSONRequestBody AdminUpdatePolicyJSONBody
 
 // AdminDecideRequestJSONRequestBody defines body for AdminDecideRequest for application/json ContentType.
 type AdminDecideRequestJSONRequestBody AdminDecideRequestJSONBody
+
+// AdminUpdateSettingsJSONRequestBody defines body for AdminUpdateSettings for application/json ContentType.
+type AdminUpdateSettingsJSONRequestBody AdminUpdateSettingsJSONBody
+
+// AdminStartSupportAccessJSONRequestBody defines body for AdminStartSupportAccess for application/json ContentType.
+type AdminStartSupportAccessJSONRequestBody AdminStartSupportAccessJSONBody
 
 // AdminCreateUserJSONRequestBody defines body for AdminCreateUser for application/json ContentType.
 type AdminCreateUserJSONRequestBody AdminCreateUserJSONBody
@@ -317,20 +493,26 @@ type StartMagicAuthJSONRequestBody StartMagicAuthJSONBody
 // VerifyMagicAuthJSONRequestBody defines body for VerifyMagicAuth for application/json ContentType.
 type VerifyMagicAuthJSONRequestBody VerifyMagicAuthJSONBody
 
-// ConfigureBootstrapJSONRequestBody defines body for ConfigureBootstrap for application/json ContentType.
-type ConfigureBootstrapJSONRequestBody ConfigureBootstrapJSONBody
+// StartBootstrapJSONRequestBody defines body for StartBootstrap for application/json ContentType.
+type StartBootstrapJSONRequestBody StartBootstrapJSONBody
+
+// ValidateBootstrapCodeJSONRequestBody defines body for ValidateBootstrapCode for application/json ContentType.
+type ValidateBootstrapCodeJSONRequestBody ValidateBootstrapCodeJSONBody
 
 // VerifyBootstrapJSONRequestBody defines body for VerifyBootstrap for application/json ContentType.
 type VerifyBootstrapJSONRequestBody VerifyBootstrapJSONBody
 
-// AddFavoriteJSONRequestBody defines body for AddFavorite for application/json ContentType.
-type AddFavoriteJSONRequestBody AddFavoriteJSONBody
-
 // CreateFolderJSONRequestBody defines body for CreateFolder for application/json ContentType.
 type CreateFolderJSONRequestBody CreateFolderJSONBody
 
+// UpdateMeJSONRequestBody defines body for UpdateMe for application/json ContentType.
+type UpdateMeJSONRequestBody UpdateMeJSONBody
+
 // UpdatePreferencesJSONRequestBody defines body for UpdatePreferences for application/json ContentType.
 type UpdatePreferencesJSONRequestBody UpdatePreferencesJSONBody
+
+// DownloadNodeArchiveJSONRequestBody defines body for DownloadNodeArchive for application/json ContentType.
+type DownloadNodeArchiveJSONRequestBody DownloadNodeArchiveJSONBody
 
 // BulkMutateNodesJSONRequestBody defines body for BulkMutateNodes for application/json ContentType.
 type BulkMutateNodesJSONRequestBody BulkMutateNodesJSONBody
@@ -338,8 +520,17 @@ type BulkMutateNodesJSONRequestBody BulkMutateNodesJSONBody
 // UpdateNodeJSONRequestBody defines body for UpdateNode for application/json ContentType.
 type UpdateNodeJSONRequestBody UpdateNodeJSONBody
 
-// MutateNodeJSONRequestBody defines body for MutateNode for application/json ContentType.
-type MutateNodeJSONRequestBody MutateNodeJSONBody
+// CopyNodeJSONRequestBody defines body for CopyNode for application/json ContentType.
+type CopyNodeJSONRequestBody CopyNodeJSONBody
+
+// MoveNodeJSONRequestBody defines body for MoveNode for application/json ContentType.
+type MoveNodeJSONRequestBody MoveNodeJSONBody
+
+// RestoreNodeJSONRequestBody defines body for RestoreNode for application/json ContentType.
+type RestoreNodeJSONRequestBody RestoreNodeJSONBody
+
+// SaveSharedFileCopyJSONRequestBody defines body for SaveSharedFileCopy for application/json ContentType.
+type SaveSharedFileCopyJSONRequestBody SaveSharedFileCopyJSONBody
 
 // CreatePublicShareJSONRequestBody defines body for CreatePublicShare for application/json ContentType.
 type CreatePublicShareJSONRequestBody CreatePublicShareJSONBody
