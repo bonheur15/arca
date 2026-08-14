@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { ArrowLeft, ArrowRight, Check, Clock3, KeyRound, LockKeyhole, Mail, ShieldCheck, Sparkles } from "lucide-react";
+import { ArrowDownToLine, ArrowLeft, ArrowRight, Check, Clock3, KeyRound, LockKeyhole, Mail, ShieldCheck, Sparkles } from "lucide-react";
 import { motion } from "motion/react";
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { api, describeError } from "../api/client";
@@ -245,7 +245,7 @@ export function PublicPage() {
   return (
     <div className="public-page">
       <header className="public-header"><Link className="brand" to="/redeem"><ArcaMark size={30} /><span>arca</span></Link><StatusPill tone="accent"><Clock3 size={13} />Expires {new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(bundle.data.expiresAt))}</StatusPill></header>
-      <main className="public-main"><div className="page-heading"><span className="eyebrow">Shared with a secure code</span><h1>{bundle.data.name}</h1><p>Read-only access. Download the items you need before this exchange expires.</p></div><PublicFiles bundle={bundle.data} /></main>
+      <main className="public-main"><div className="page-heading"><span className="eyebrow">Shared with a secure code</span><h1>{bundle.data.name}</h1><p>Read-only access. Download the items you need before this exchange expires.</p><a className="button button--secondary" download="arca-shared.zip" href="/api/v1/public/archive"><ArrowDownToLine size={17} />Download all as ZIP</a></div><PublicFiles bundle={bundle.data} /></main>
       <footer className="public-footer"><ShieldCheck size={15} />Delivered privately through Arca</footer>
     </div>
   );
