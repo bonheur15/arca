@@ -143,6 +143,7 @@ CREATE TABLE uploads (
     intended_blob_key TEXT,
     conflict_mode TEXT NOT NULL CHECK (conflict_mode IN ('fail', 'keep_both', 'replace')),
     replace_node_id TEXT REFERENCES nodes(id),
+	replace_revision INTEGER CHECK (replace_revision IS NULL OR replace_revision > 0),
     share_id TEXT,
     state TEXT NOT NULL CHECK (state IN ('pending', 'finalizing', 'completed', 'cancelled', 'expired', 'failed')),
     error_code TEXT,
@@ -260,6 +261,15 @@ CREATE TABLE support_access (
     revoked_at TEXT,
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE admin_recovery_codes (
+    id TEXT PRIMARY KEY,
+    code_hash BLOB NOT NULL UNIQUE,
+    expires_at TEXT NOT NULL,
+    consumed_at TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX admin_recovery_expiry_idx ON admin_recovery_codes(expires_at, consumed_at);
 
 CREATE TABLE jobs (
     id TEXT PRIMARY KEY,
