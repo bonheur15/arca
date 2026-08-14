@@ -285,6 +285,9 @@ func (s *Service) Patch(ctx context.Context, request PatchRequest) (Upload, erro
 	if upload.State != StatePending {
 		return Upload{}, files.NewError(files.CodeInvalidState, op, upload.ID, "upload is not pending")
 	}
+	if err := s.authorizePending(ctx, upload); err != nil {
+		return Upload{}, err
+	}
 	if !s.now().Before(upload.ExpiresAt) {
 		_ = s.expireLocked(ctx, upload)
 		return Upload{}, files.NewError(files.CodeExpired, op, upload.ID, "upload expired")
@@ -345,6 +348,9 @@ func (s *Service) Patch(ctx context.Context, request PatchRequest) (Upload, erro
 		return Upload{}, files.NewError(files.CodeOffsetMismatch, op, upload.ID, "offset changed concurrently")
 	}
 	if newOffset == upload.ExpectedBytes {
+		if err := s.authorizePending(ctx, upload); err != nil {
+			return Upload{}, err
+		}
 		return s.finalizeLocked(ctx, upload.ID)
 	}
 	return s.Head(ctx, request.ActorID, upload.ID)
@@ -366,6 +372,11 @@ func (s *Service) Complete(ctx context.Context, actorID, uploadID string) (Uploa
 		return Upload{}, files.NewError(files.CodeInvalidState, "complete upload", uploadID, "upload is incomplete")
 	}
 	if upload.State == StatePending {
+		if err := s.authorizePending(ctx, upload); err != nil {
+			return Upload{}, err
+		}
+	}
+	if upload.State == StatePending {
 		staging, err := s.storage.OpenStaging(uploadID)
 		if err != nil {
 			return Upload{}, files.WrapError(files.CodeInvalid, "complete upload", uploadID, err)
@@ -375,6 +386,29 @@ func (s *Service) Complete(ctx context.Context, actorID, uploadID string) (Uploa
 		}
 	}
 	return s.finalizeLocked(ctx, uploadID)
+}
+
+func (s *Service) authorizePending(ctx context.Context, upload Upload) error {
+	access, err := files.Authorize(ctx, s.db.Reader(), upload.ActorID, upload.ParentID, files.ActionCreateChild, s.now())
+	if err != nil {
+		return err
+	}
+	if access.OwnerID != upload.OwnerID {
+		return files.NewError(files.CodeForbidden, "authorize upload", upload.ID, "destination ownership changed")
+	}
+	if upload.ShareID != nil && (access.ShareID == "" || access.ShareID != *upload.ShareID || !access.AllowEditorUploads) {
+		return files.NewError(files.CodeForbidden, "authorize upload", upload.ID, "editor upload share is no longer active")
+	}
+	if upload.ReplaceNodeID != nil {
+		replaceAccess, err := files.Authorize(ctx, s.db.Reader(), upload.ActorID, *upload.ReplaceNodeID, files.ActionReplace, s.now())
+		if err != nil {
+			return err
+		}
+		if replaceAccess.OwnerID != upload.OwnerID || (upload.ShareID != nil && replaceAccess.ShareID != *upload.ShareID) {
+			return files.NewError(files.CodeForbidden, "authorize upload", upload.ID, "replacement target is no longer in the upload share")
+		}
+	}
+	return nil
 }
 
 func equalDigest(left, right []byte) bool {
