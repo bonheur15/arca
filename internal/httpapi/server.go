@@ -79,7 +79,11 @@ func (s *Server) routes() chi.Router {
 	cors, _ := CORS(s.runtime.Config.File.AllowedCORSOrigins)
 	router.Use(cors)
 	router.Use(Recoverer(s.logger))
-	router.Use(SecurityHeaders(s.runtime.Config.TLSCert != ""))
+	tlsPublic := s.runtime.Config.TLSCert != ""
+	if parsed, err := url.Parse(s.runtime.Config.File.PublicURL); err == nil && parsed.Scheme == "https" {
+		tlsPublic = true
+	}
+	router.Use(SecurityHeaders(tlsPublic))
 	router.Use(AccessLog(s.logger))
 
 	router.Get("/health/live", s.live)
@@ -99,13 +103,14 @@ func (s *Server) routes() chi.Router {
 		api.Get("/access-requests/status", s.accessRequestStatus)
 		api.With(s.publicExchangeLimits).Post("/public/exchange", s.publicExchange)
 		api.Get("/public/bundle", s.publicBundle)
-		api.Get("/public/archive", s.publicArchive)
+		api.With(s.rate("public-archive", Limit{Capacity: 5, Window: time.Minute})).Get("/public/archive", s.publicArchive)
 		api.Get("/public/files/{nodeID}/content", s.publicContent)
 		api.Get("/session", s.session)
 
 		api.Group(func(private chi.Router) {
 			private.Use(RequireAuthentication(AuthenticateFunc(s.authenticate)))
 			private.Use(s.csrf)
+			private.Post("/auth/refresh", s.refresh)
 			private.Post("/auth/logout", s.logout)
 			private.Get("/sessions", s.sessions)
 			private.Delete("/sessions/{sessionID}", s.revokeSession)
@@ -460,6 +465,8 @@ func (s *Server) handleError(w http.ResponseWriter, r *http.Request, err error) 
 		WriteProblem(w, r, http.StatusForbidden, "forbidden", "Forbidden", "You do not have permission to perform this operation.")
 	case errors.Is(err, accounts.ErrConflict), errors.Is(err, accounts.ErrLastSuperadmin), errors.Is(err, accounts.ErrInvalidTransition), errors.Is(err, accounts.ErrRequestDecided):
 		WriteProblem(w, r, http.StatusConflict, "conflict", "Conflict", err.Error())
+	case errors.Is(err, accounts.ErrDeletionNotDue), errors.Is(err, accounts.ErrDeletionBusy):
+		WriteProblem(w, r, http.StatusConflict, "deletion_not_ready", "Deletion not ready", err.Error())
 	case errors.Is(err, accounts.ErrInvalidInput), errors.Is(err, shares.ErrInvalid):
 		WriteProblem(w, r, http.StatusBadRequest, "invalid_request", "Invalid request", err.Error())
 	case errors.Is(err, auth.ErrRateLimited):
