@@ -85,6 +85,14 @@ paths:
       responses:
         '204': {description: Signed out}
         default: {$ref: '#/components/responses/Problem'}
+  /auth/refresh:
+    post:
+      tags: [Authentication]
+      operationId: refreshSession
+      description: Validates the current sealed browser session and rotates it when required.
+      responses:
+        '200': {$ref: '#/components/responses/Session'}
+        default: {$ref: '#/components/responses/Problem'}
   /sessions:
     get:
       tags: [Authentication]
@@ -472,8 +480,13 @@ paths:
     patch:
       tags: [Administration]
       operationId: adminUpdateUser
-      parameters: [{name: userId, in: path, required: true, schema: {type: string, format: uuid}}, {$ref: '#/components/parameters/IfMatch'}]
-      requestBody: {$ref: '#/components/requestBodies/JSON'}
+      parameters: [{name: userId, in: path, required: true, schema: {type: string, format: uuid}}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AdminUserUpdate'}
+      description: "Account deletion requires action=delete and an explicit deletionMode of transfer or purge. Transfer also requires transferToUserId. Deletion suspends access immediately, remains recoverable for seven days, then completes asynchronously."
       responses: {'200': {$ref: '#/components/responses/User'}, default: {$ref: '#/components/responses/Problem'}}
   /admin/requests:
     get:
@@ -571,7 +584,7 @@ components:
   schemas:
     User:
       type: object
-      required: [id, username, email, role, state, quota_bytes, used_bytes, reserved_bytes]
+      required: [id, username, email, role, state, quota_bytes, quota_unlimited, used_bytes, reserved_bytes, preferences, created_at, updated_at]
       properties:
         id: {type: string, format: uuid}
         username: {type: string}
@@ -583,7 +596,21 @@ components:
         quota_unlimited: {type: boolean}
         used_bytes: {type: integer, format: int64}
         reserved_bytes: {type: integer, format: int64}
+        root_node_id: {type: string, format: uuid}
+        deletion_due_at: {type: string, format: date-time, nullable: true}
+        last_sign_in_at: {type: string, format: date-time, nullable: true}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
         preferences: {$ref: '#/components/schemas/Preferences'}
+    AdminUserUpdate:
+      type: object
+      properties:
+        action: {type: string, enum: [suspend, activate, restore, delete]}
+        role: {type: string, enum: [superadmin, member]}
+        quotaBytes: {type: integer, format: int64, minimum: 0}
+        quotaUnlimited: {type: boolean}
+        deletionMode: {type: string, enum: [transfer, purge]}
+        transferToUserId: {type: string, format: uuid}
     Preferences:
       type: object
       properties:
@@ -674,7 +701,10 @@ components:
         max_active_public_shares: {type: integer}
         max_public_ttl_minutes: {type: integer}
         max_public_redemptions: {type: integer}
+        allowed_mime_groups: {type: array, items: {type: string}}
         blocked_extensions: {type: array, items: {type: string}}
+        upload_rate_bytes: {type: integer, format: int64, nullable: true}
+        download_rate_bytes: {type: integer, format: int64, nullable: true}
     Session:
       type: object
       required: [authenticated]
