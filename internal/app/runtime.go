@@ -96,6 +96,14 @@ func Open(ctx context.Context, cfg config.Runtime, version string, logger *slog.
 	if err != nil {
 		return cleanup(err)
 	}
+	if initialized {
+		if err := loadInstanceSettings(ctx, db, &cfg); err != nil {
+			return cleanup(err)
+		}
+		if err := cfg.Save(); err != nil {
+			return cleanup(err)
+		}
+	}
 	cookieKey, err := config.DecodeSecret(cfg.Secrets.CookieKey)
 	if err != nil {
 		return cleanup(fmt.Errorf("decode cookie secret: %w", err))
@@ -151,7 +159,7 @@ func Open(ctx context.Context, cfg config.Runtime, version string, logger *slog.
 		return cleanup(err)
 	}
 	jobRunner := jobs.New(db.Writer(), logger)
-	registerJobs(jobRunner, db, uploadService, storage, logger)
+	registerJobs(jobRunner, db, uploadService, fileService)
 	bootstrapService, setupCode, err := NewBootstrap(&cfg, db.Writer(), accountService, authService, dynamicProvider, initialized, logger)
 	if err != nil {
 		return cleanup(err)
@@ -193,45 +201,73 @@ func ensureInstanceRow(ctx context.Context, db *database.DB, cfg config.Runtime)
 	return initialized == 1, nil
 }
 
-func registerJobs(runner *jobs.Runner, db *database.DB, uploadService *uploads.Service, storage uploads.Storage, logger *slog.Logger) {
+func loadInstanceSettings(ctx context.Context, db *database.DB, cfg *config.Runtime) error {
+	var trustedJSON string
+	if err := db.Reader().QueryRowContext(ctx, `SELECT name, public_url, filesystem_reserve_bytes, trusted_proxy_cidrs
+		FROM instance_settings WHERE singleton = 1`).Scan(&cfg.File.InstanceName, &cfg.File.PublicURL, &cfg.File.FilesystemReserveBytes, &trustedJSON); err != nil {
+		return fmt.Errorf("load instance settings: %w", err)
+	}
+	if err := json.Unmarshal([]byte(trustedJSON), &cfg.File.TrustedProxyCIDRs); err != nil {
+		return fmt.Errorf("decode trusted proxy settings: %w", err)
+	}
+	return nil
+}
+
+func registerJobs(runner *jobs.Runner, db *database.DB, uploadService *uploads.Service, fileService *files.Service) {
 	runner.Register("uploads.reconcile", func(ctx context.Context, _ json.RawMessage) error {
 		return uploadService.Reconcile(ctx)
 	})
 	runner.Register("uploads.expire", func(ctx context.Context, _ json.RawMessage) error {
-		return uploadService.Reconcile(ctx)
+		_, err := uploadService.Expire(ctx, 500)
+		if err != nil {
+			return err
+		}
+		_, err = runner.Enqueue(ctx, "uploads.expire", map[string]any{}, time.Now().Add(time.Hour))
+		return err
 	})
 	runner.Register("public_shares.cleanup", func(ctx context.Context, _ json.RawMessage) error {
 		now := time.Now().UTC().Format(time.RFC3339Nano)
 		_, err := db.Writer().ExecContext(ctx, `DELETE FROM public_access_sessions WHERE expires_at <= ?`, now)
-		return err
-	})
-	runner.Register("blobs.gc", func(ctx context.Context, _ json.RawMessage) error {
-		now := time.Now().UTC().Format(time.RFC3339Nano)
-		rows, err := db.Reader().QueryContext(ctx, `SELECT id, storage_key FROM blobs WHERE state = 'deleting' AND ref_count = 0 AND delete_after <= ? LIMIT 100`, now)
 		if err != nil {
 			return err
 		}
-		type candidate struct{ id, key string }
-		var candidates []candidate
+		_, err = runner.Enqueue(ctx, "public_shares.cleanup", map[string]any{}, time.Now().Add(5*time.Minute))
+		return err
+	})
+	runner.Register("blobs.gc", func(ctx context.Context, _ json.RawMessage) error {
+		_, err := uploadService.CollectGarbage(ctx, 500)
+		return err
+	})
+	runner.Register("storage.retention", func(ctx context.Context, _ json.RawMessage) error {
+		rows, err := db.Reader().QueryContext(ctx, `SELECT id FROM users WHERE state <> 'deleted' ORDER BY id`)
+		if err != nil {
+			return err
+		}
+		var owners []string
 		for rows.Next() {
-			var item candidate
-			if err := rows.Scan(&item.id, &item.key); err != nil {
+			var id string
+			if err := rows.Scan(&id); err != nil {
 				_ = rows.Close()
 				return err
 			}
-			candidates = append(candidates, item)
+			owners = append(owners, id)
 		}
 		if err := rows.Close(); err != nil {
 			return err
 		}
-		for _, item := range candidates {
-			if err := storage.RemoveBlob(item.key); err != nil {
-				logger.Warn("blob garbage collection failed", "blob_id", item.id, "error", err)
-				continue
+		for _, ownerID := range owners {
+			if _, err := fileService.PruneVersions(ctx, ownerID, 500); err != nil {
+				return err
 			}
-			_, _ = db.Writer().ExecContext(ctx, `DELETE FROM blobs WHERE id = ? AND state = 'deleting' AND ref_count = 0`, item.id)
+			if _, err := fileService.PurgeExpiredTrash(ctx, ownerID, 100); err != nil {
+				return err
+			}
+			if _, err := fileService.ReconcileQuota(ctx, ownerID); err != nil {
+				return err
+			}
 		}
-		return nil
+		_, err = runner.Enqueue(ctx, "storage.retention", map[string]any{}, time.Now().Add(24*time.Hour))
+		return err
 	})
 }
 
@@ -240,6 +276,17 @@ func registerJobs(runner *jobs.Runner, db *database.DB, uploadService *uploads.S
 func (r *Runtime) StartBackground(parent context.Context) error {
 	if err := r.Uploads.Reconcile(parent); err != nil {
 		return fmt.Errorf("reconcile uploads: %w", err)
+	}
+	for _, kind := range []string{"uploads.expire", "public_shares.cleanup", "blobs.gc", "storage.retention"} {
+		var pending int
+		if err := r.Database.Reader().QueryRowContext(parent, `SELECT COUNT(*) FROM jobs WHERE kind = ? AND state IN ('queued','running')`, kind).Scan(&pending); err != nil {
+			return err
+		}
+		if pending == 0 {
+			if _, err := r.Jobs.Enqueue(parent, kind, map[string]any{}, time.Now()); err != nil {
+				return err
+			}
+		}
 	}
 	ctx, cancel := context.WithCancel(parent)
 	r.backgroundStop = cancel
