@@ -55,6 +55,9 @@ func Open(ctx context.Context, cfg Config) (*DB, error) {
 	if err := os.Chmod(filepath.Dir(abs), 0o700); err != nil {
 		return nil, fmt.Errorf("secure database directory: %w", err)
 	}
+	if err := validateLocalFilesystem(filepath.Dir(abs)); err != nil {
+		return nil, err
+	}
 	if info, err := os.Lstat(abs); err == nil {
 		if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
 			return nil, fmt.Errorf("database path %q must be a regular file", abs)
