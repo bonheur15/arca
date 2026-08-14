@@ -112,6 +112,8 @@ func (s *Server) routes() chi.Router {
 			private.Patch("/me", s.updateMe)
 			private.Put("/me/preferences", s.updatePreferences)
 			private.Get("/users/lookup", s.lookupUser)
+			private.Get("/support-access", s.activeSupportAccess)
+			private.Delete("/support-access/{accessID}", s.revokeSupportAccess)
 
 			private.Get("/nodes", s.listNodes)
 			private.Get("/nodes/{nodeID}", s.getNode)
