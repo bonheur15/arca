@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"runtime/debug"
 	"strings"
@@ -185,9 +186,11 @@ type Limit struct {
 }
 
 type Limiter struct {
-	mu      sync.Mutex
-	buckets map[string]*bucket
-	now     func() time.Time
+	mu                 sync.Mutex
+	buckets            map[string]*bucket
+	publicFailures     []time.Time
+	publicCircuitUntil time.Time
+	now                func() time.Time
 }
 
 type bucket struct {
@@ -203,18 +206,53 @@ func (l *Limiter) Allow(key string, limit Limit) (bool, time.Duration) {
 	if limit.Capacity <= 0 || limit.Window <= 0 {
 		return true, 0
 	}
+	if strings.HasPrefix(key, "public-ip-minute:") {
+		key = "public-ip-minute:" + canonicalPublicIP(strings.TrimPrefix(key, "public-ip-minute:"))
+	} else if strings.HasPrefix(key, "public-ip-ten:") {
+		key = "public-ip-ten:" + canonicalPublicIP(strings.TrimPrefix(key, "public-ip-ten:"))
+	}
 	now := l.now()
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	// publicExchangeLimits intentionally checks this instance key after its
+	// IP limits. Keeping the breaker here lets the route retain a single,
+	// uniform 429 response while failure recording stays in the exchange
+	// handler and never needs the submitted code.
+	if key == "public-instance" && now.Before(l.publicCircuitUntil) {
+		return false, l.publicCircuitUntil.Sub(now)
+	}
+	allowed, retry := l.allowLocked(key, limit, now)
+	if !allowed {
+		return false, retry
+	}
+	// The existing route invokes public-ip-ten:<address> for every exchange
+	// that passed the one-minute IP limit. Enforce the adjacent network limit
+	// at that same boundary without retaining or inspecting request bodies.
+	if strings.HasPrefix(key, "public-ip-ten:") {
+		prefix := publicIPPrefix(strings.TrimPrefix(key, "public-ip-ten:"))
+		allowed, retry = l.allowLocked("public-prefix-ten:"+prefix, Limit{Capacity: 25, Window: 10 * time.Minute}, now)
+		if !allowed {
+			return false, retry
+		}
+	}
+	l.cleanupLocked(now)
+	return true, 0
+}
+
+func (l *Limiter) allowLocked(key string, limit Limit, now time.Time) (bool, time.Duration) {
 	b := l.buckets[key]
 	if b == nil || !now.Before(b.reset) {
 		l.buckets[key] = &bucket{count: 1, reset: now.Add(limit.Window)}
 		return true, 0
 	}
 	if b.count >= limit.Capacity {
-		return false, time.Until(b.reset)
+		return false, b.reset.Sub(now)
 	}
 	b.count++
+	return true, 0
+}
+
+func (l *Limiter) cleanupLocked(now time.Time) {
 	if len(l.buckets) > 10000 {
 		for existingKey, existing := range l.buckets {
 			if !now.Before(existing.reset) {
@@ -222,7 +260,58 @@ func (l *Limiter) Allow(key string, limit Limit) (bool, time.Duration) {
 			}
 		}
 	}
-	return true, 0
+}
+
+const (
+	publicFailureThreshold = 30
+	publicFailureWindow    = time.Minute
+	publicCircuitDuration  = time.Minute
+)
+
+// RecordPublicExchangeFailure tracks only failed five-digit code exchanges.
+// No code, body, email, or IP address is accepted or retained by this method.
+// Thirty failures within one minute open an instance-wide one-minute breaker;
+// the ordinary 100/10-minute instance limit remains in force independently.
+func (l *Limiter) RecordPublicExchangeFailure() {
+	if l == nil {
+		return
+	}
+	now := l.now()
+	cutoff := now.Add(-publicFailureWindow)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	first := 0
+	for first < len(l.publicFailures) && !l.publicFailures[first].After(cutoff) {
+		first++
+	}
+	l.publicFailures = append(l.publicFailures[:0], l.publicFailures[first:]...)
+	l.publicFailures = append(l.publicFailures, now)
+	if len(l.publicFailures) >= publicFailureThreshold {
+		until := now.Add(publicCircuitDuration)
+		if until.After(l.publicCircuitUntil) {
+			l.publicCircuitUntil = until
+		}
+	}
+}
+
+func publicIPPrefix(raw string) string {
+	address, err := netip.ParseAddr(canonicalPublicIP(raw))
+	if err != nil {
+		return "unknown"
+	}
+	bits := 64
+	if address.Is4() {
+		bits = 24
+	}
+	return netip.PrefixFrom(address, bits).Masked().String()
+}
+
+func canonicalPublicIP(raw string) string {
+	address, err := netip.ParseAddr(strings.TrimSpace(raw))
+	if err != nil {
+		return "unknown"
+	}
+	return address.Unmap().WithZone("").String()
 }
 
 func RateLimit(limiter *Limiter, key func(*http.Request) string, limit Limit) func(http.Handler) http.Handler {
