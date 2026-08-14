@@ -589,6 +589,7 @@ export const api = {
       allowAccessRequests: booleanAt(record, true, "allowAccessRequests", "allow_access_requests"),
       filesystemReserveBytes: numberAt(record, 1_073_741_824, "filesystemReserveBytes", "filesystem_reserve_bytes"),
       trustedProxyCidrs: arrayAt(record, "trustedProxyCidrs", "trusted_proxy_cidrs").filter((item): item is string => typeof item === "string"),
+      allowedCorsOrigins: arrayAt(record, "allowedCorsOrigins", "allowed_cors_origins").filter((item): item is string => typeof item === "string"),
     };
   },
   saveSettings: (input: InstanceSettings) => apiRequest("/admin/settings", { method: "PUT", body: input }),
