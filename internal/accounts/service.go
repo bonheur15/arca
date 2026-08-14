@@ -42,6 +42,37 @@ func NewService(repository *Repository, identity IdentityProvider, status *Statu
 	return &Service{repository: repository, identity: identity, status: status, audit: recorder, now: time.Now}
 }
 
+func (s *Service) GetUser(ctx context.Context, userID string) (*User, error) {
+	return s.repository.GetUserByID(ctx, userID)
+}
+
+func (s *Service) LookupUser(ctx context.Context, usernameOrEmail string) (*User, error) {
+	return s.repository.GetUserByUsernameOrEmail(ctx, usernameOrEmail)
+}
+
+func (s *Service) ListUsers(ctx context.Context, limit int, afterID string, mutation MutationContext) ([]User, error) {
+	if err := s.requireSuperadmin(ctx, mutation.ActorID); err != nil {
+		return nil, err
+	}
+	return s.repository.ListUsers(ctx, limit, afterID)
+}
+
+func (s *Service) GetPolicy(ctx context.Context, userID string, mutation MutationContext) (Policy, error) {
+	if mutation.ActorID != userID {
+		if err := s.requireSuperadmin(ctx, mutation.ActorID); err != nil {
+			return Policy{}, err
+		}
+	}
+	return s.repository.GetPolicy(ctx, userID)
+}
+
+func (s *Service) ListAccessRequests(ctx context.Context, state AccessRequestState, limit int, afterID string, mutation MutationContext) ([]AccessRequest, error) {
+	if err := s.requireSuperadmin(ctx, mutation.ActorID); err != nil {
+		return nil, err
+	}
+	return s.repository.ListAccessRequests(ctx, state, limit, afterID)
+}
+
 type RequestAccessResult struct {
 	Request     AccessRequest
 	StatusToken string
@@ -60,7 +91,7 @@ func (s *Service) RequestAccess(ctx context.Context, params CreateAccessRequestP
 		return nil, err
 	}
 	if err := s.record(ctx, mutation, "access_request.created", "access_request", request.ID, nil); err != nil {
-		return nil, err
+		return &RequestAccessResult{Request: *request, StatusToken: token}, committedAudit(err)
 	}
 	return &RequestAccessResult{Request: *request, StatusToken: token}, nil
 }
@@ -88,8 +119,10 @@ func (s *Service) CreateUser(ctx context.Context, params CreateUserParams, mutat
 	if err := s.requireSuperadmin(ctx, mutation.ActorID); err != nil {
 		return nil, err
 	}
-	if !params.Role.Valid() {
+	if params.Role == "" {
 		params.Role = RoleMember
+	} else if !params.Role.Valid() {
+		return nil, fmt.Errorf("%w: invalid role", ErrInvalidInput)
 	}
 	return s.provision(ctx, params, mutation, "user.created")
 }
@@ -108,7 +141,7 @@ func (s *Service) provision(ctx context.Context, params CreateUserParams, mutati
 		return user, err
 	}
 	if err := s.record(ctx, mutation, action, "user", completed.ID, map[string]any{"role": completed.Role}); err != nil {
-		return completed, err
+		return completed, committedAudit(err)
 	}
 	return completed, nil
 }
@@ -133,7 +166,7 @@ func (s *Service) ResumeProvisioning(ctx context.Context, userID string, mutatio
 		return user, err
 	}
 	if err := s.record(ctx, mutation, "user.provisioning_resumed", "user", userID, nil); err != nil {
-		return completed, err
+		return completed, committedAudit(err)
 	}
 	return completed, nil
 }
@@ -174,7 +207,7 @@ func (s *Service) ApproveAccessRequest(ctx context.Context, params ReserveApprov
 		return user, err
 	}
 	if err := s.record(ctx, mutation, "access_request.approved", "access_request", params.RequestID, map[string]any{"user_id": user.ID}); err != nil {
-		return user, err
+		return user, committedAudit(err)
 	}
 	return user, nil
 }
@@ -188,7 +221,7 @@ func (s *Service) RejectAccessRequest(ctx context.Context, requestID, note strin
 		return nil, err
 	}
 	if err := s.record(ctx, mutation, "access_request.rejected", "access_request", requestID, nil); err != nil {
-		return request, err
+		return request, committedAudit(err)
 	}
 	return request, nil
 }
@@ -202,7 +235,7 @@ func (s *Service) SetRole(ctx context.Context, userID string, role Role, mutatio
 		return nil, err
 	}
 	if err := s.record(ctx, mutation, "user.role_changed", "user", userID, map[string]any{"role": role}); err != nil {
-		return user, err
+		return user, committedAudit(err)
 	}
 	return user, nil
 }
@@ -225,7 +258,7 @@ func (s *Service) setState(ctx context.Context, userID string, state State, due 
 		return nil, err
 	}
 	if err := s.record(ctx, mutation, action, "user", userID, nil); err != nil {
-		return user, err
+		return user, committedAudit(err)
 	}
 	return user, nil
 }
@@ -239,7 +272,7 @@ func (s *Service) RestoreUser(ctx context.Context, userID string, mutation Mutat
 		return nil, err
 	}
 	if err := s.record(ctx, mutation, "user.restored", "user", userID, nil); err != nil {
-		return user, err
+		return user, committedAudit(err)
 	}
 	return user, nil
 }
@@ -253,7 +286,7 @@ func (s *Service) UpdatePolicyAndQuota(ctx context.Context, userID string, quota
 		return nil, err
 	}
 	if err := s.record(ctx, mutation, "user.policy_changed", "user", userID, map[string]any{"quota_bytes": quotaBytes, "quota_unlimited": quotaUnlimited}); err != nil {
-		return user, err
+		return user, committedAudit(err)
 	}
 	return user, nil
 }
@@ -272,7 +305,26 @@ func (s *Service) UpdatePreferences(ctx context.Context, userID string, preferen
 		return nil, err
 	}
 	if err := s.record(ctx, mutation, "user.preferences_changed", "user", userID, nil); err != nil {
-		return user, err
+		return user, committedAudit(err)
+	}
+	return user, nil
+}
+
+func (s *Service) UpdateProfile(ctx context.Context, userID string, update ProfileUpdate, mutation MutationContext) (*User, error) {
+	if mutation.ActorID == "" {
+		return nil, ErrForbidden
+	}
+	if mutation.ActorID != userID {
+		if err := s.requireSuperadmin(ctx, mutation.ActorID); err != nil {
+			return nil, err
+		}
+	}
+	user, err := s.repository.UpdateProfile(ctx, userID, update)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.record(ctx, mutation, "user.profile_changed", "user", userID, nil); err != nil {
+		return user, committedAudit(err)
 	}
 	return user, nil
 }
@@ -305,4 +357,8 @@ func (s *Service) record(ctx context.Context, mutation MutationContext, action, 
 		IPAddress: mutation.IPAddress, UserAgent: mutation.UserAgent,
 		RequestID: mutation.RequestID, Metadata: metadata,
 	})
+}
+
+func committedAudit(err error) error {
+	return &CommittedAuditError{Err: err}
 }
