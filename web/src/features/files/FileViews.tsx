@@ -74,12 +74,14 @@ function fileHref(node: ArcaNode): string {
   return node.kind === "folder" ? `/files/${node.id}` : `/api/v1/files/${node.id}/content`;
 }
 
-function NodeMenu({ node, collection, onPreview, onDetails, onRename, onShare, onTrash, onRestore, onPurge }: {
+function NodeMenu({ node, collection, onPreview, onDetails, onRename, onMove, onCopy, onShare, onTrash, onRestore, onPurge }: {
   node: ArcaNode;
   collection: Collection;
   onPreview: () => void;
   onDetails: () => void;
   onRename: () => void;
+  onMove: () => void;
+  onCopy: () => void;
   onShare: () => void;
   onTrash: () => void;
   onRestore: () => void;
@@ -94,6 +96,8 @@ function NodeMenu({ node, collection, onPreview, onDetails, onRename, onShare, o
           {node.kind === "file" ? <DropdownMenu.Item asChild><a className="dropdown__item" download={safeDownloadName(node.name)} href={`/api/v1/files/${node.id}/content?download=1`}><ArrowDownToLine size={16} />Download</a></DropdownMenu.Item> : null}
           <DropdownMenu.Item className="dropdown__item" onSelect={onDetails}><Info size={16} />Details</DropdownMenu.Item>
           {collection !== "trash" && node.capabilities.write ? <DropdownMenu.Item className="dropdown__item" onSelect={onRename}><Pencil size={16} />Rename</DropdownMenu.Item> : null}
+          {collection !== "trash" && node.capabilities.write ? <DropdownMenu.Item className="dropdown__item" onSelect={onMove}><FolderInput size={16} />Move</DropdownMenu.Item> : null}
+          {collection !== "trash" && node.capabilities.write ? <DropdownMenu.Item className="dropdown__item" onSelect={onCopy}><Copy size={16} />Make a copy</DropdownMenu.Item> : null}
           {collection !== "trash" && node.capabilities.share ? <DropdownMenu.Item className="dropdown__item" onSelect={onShare}><Share2 size={16} />Share</DropdownMenu.Item> : null}
           <DropdownMenu.Separator className="dropdown__separator" />
           {collection === "trash" ? <DropdownMenu.Item className="dropdown__item" onSelect={onRestore}><RotateCcw size={16} />Restore</DropdownMenu.Item> : node.capabilities.trash ? <DropdownMenu.Item className="dropdown__item dropdown__item--danger" onSelect={onTrash}><Trash2 size={16} />Move to trash</DropdownMenu.Item> : null}
@@ -117,6 +121,8 @@ function FileList({
   onPreview,
   onDetails,
   onRename,
+  onMove,
+  onCopy,
   onShare,
   onTrash,
   onRestore,
@@ -129,6 +135,8 @@ function FileList({
   onPreview: (node: ArcaNode) => void;
   onDetails: (node: ArcaNode) => void;
   onRename: (node: ArcaNode) => void;
+  onMove: (node: ArcaNode) => void;
+  onCopy: (node: ArcaNode) => void;
   onShare: (node: ArcaNode) => void;
   onTrash: (node: ArcaNode) => void;
   onRestore: (node: ArcaNode) => void;
@@ -163,7 +171,7 @@ function FileList({
               <span className="file-row__owner" role="gridcell">{node.owner.displayName || node.owner.username || "You"}</span>
               <span role="gridcell">{formatRelativeDate(node.updatedAt)}</span>
               <span role="gridcell">{node.kind === "folder" ? "—" : formatBytes(node.sizeBytes)}</span>
-              <span role="gridcell"><NodeMenu collection={collection} node={node} onDetails={() => onDetails(node)} onPreview={() => onPreview(node)} onPurge={() => onPurge(node)} onRename={() => onRename(node)} onRestore={() => onRestore(node)} onShare={() => onShare(node)} onTrash={() => onTrash(node)} /></span>
+              <span role="gridcell"><NodeMenu collection={collection} node={node} onCopy={() => onCopy(node)} onDetails={() => onDetails(node)} onMove={() => onMove(node)} onPreview={() => onPreview(node)} onPurge={() => onPurge(node)} onRename={() => onRename(node)} onRestore={() => onRestore(node)} onShare={() => onShare(node)} onTrash={() => onTrash(node)} /></span>
             </motion.div>
           );
         })}
@@ -179,7 +187,7 @@ function FileGrid({ nodes, collection, selected, onSelect, onPreview, onDetails,
         const checked = selected.has(node.id);
         return (
           <motion.article className={`file-card ${checked ? "file-card--selected" : ""}`} initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} key={node.id} onDoubleClick={() => onPreview(node)} role="gridcell">
-            <div className="file-card__top"><label className="check"><input aria-label={`Select ${node.name}`} checked={checked} onChange={(event) => onSelect(node.id, event.target.checked)} type="checkbox" /><span><Check size={12} /></span></label><NodeMenu collection={collection} node={node} onDetails={() => onDetails(node)} onPreview={() => onPreview(node)} onPurge={() => onPurge(node)} onRename={() => onRename(node)} onRestore={() => onRestore(node)} onShare={() => onShare(node)} onTrash={() => onTrash(node)} /></div>
+            <div className="file-card__top"><label className="check"><input aria-label={`Select ${node.name}`} checked={checked} onChange={(event) => onSelect(node.id, event.target.checked)} type="checkbox" /><span><Check size={12} /></span></label><NodeMenu collection={collection} node={node} onCopy={() => onCopy(node)} onDetails={() => onDetails(node)} onMove={() => onMove(node)} onPreview={() => onPreview(node)} onPurge={() => onPurge(node)} onRename={() => onRename(node)} onRestore={() => onRestore(node)} onShare={() => onShare(node)} onTrash={() => onTrash(node)} /></div>
             <button className="file-card__preview" onClick={() => onPreview(node)} type="button"><span className="file-card__arch"><FileIcon node={node} size={36} /></span></button>
             <div className="file-card__copy"><NodeName node={node} onPreview={() => onPreview(node)} /><span>{node.kind === "folder" ? formatRelativeDate(node.updatedAt) : `${formatBytes(node.sizeBytes)} · ${formatRelativeDate(node.updatedAt)}`}</span></div>
           </motion.article>
@@ -289,6 +297,40 @@ function ShareDialog({ nodes, onClose }: { nodes: ArcaNode[]; onClose: () => voi
   );
 }
 
+function DestinationDialog({ operation, onClose }: { operation: { node: ArcaNode; mode: "move" | "copy" } | null; onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const [path, setPath] = useState<Array<{ id: string | null; name: string }>>([{ id: null, name: "My files" }]);
+  useEffect(() => setPath([{ id: null, name: "My files" }]), [operation]);
+  const parentId = path.at(-1)?.id ?? null;
+  const folders = useQuery({
+    queryKey: ["destination-folders", parentId],
+    queryFn: () => api.nodes(parentId ? { parentId } : {}),
+    enabled: Boolean(operation),
+  });
+  const transfer = useMutation({
+    mutationFn: () => operation?.mode === "copy"
+      ? api.copyNode(operation.node.id, parentId, operation.node.revision)
+      : api.moveNode(operation?.node.id ?? "", parentId, operation?.node.revision ?? 1),
+    onSuccess: async () => { await queryClient.invalidateQueries({ queryKey: ["nodes"] }); onClose(); },
+  });
+  const available = folders.data?.items.filter((node) => node.kind === "folder" && node.id !== operation?.node.id) ?? [];
+  return (
+    <Modal
+      open={Boolean(operation)}
+      onOpenChange={(open) => { if (!open) onClose(); }}
+      title={`${operation?.mode === "copy" ? "Copy" : "Move"} ${operation?.node.name ?? "item"}`}
+      description="Choose a destination folder. Arca validates cycles and name conflicts before changing anything."
+      footer={<><Button variant="ghost" onClick={onClose}>Cancel</Button><Button disabled={transfer.isPending || (operation?.mode === "move" && operation.node.parentId === parentId)} onClick={() => transfer.mutate()}>{transfer.isPending ? "Working…" : operation?.mode === "copy" ? "Copy here" : "Move here"}</Button></>}
+    >
+      <nav aria-label="Destination breadcrumb" className="destination-breadcrumbs">{path.map((crumb, index) => <span key={crumb.id ?? "root"}>{index ? <ChevronRight size={13} /> : null}<button onClick={() => setPath((current) => current.slice(0, index + 1))} type="button">{crumb.name}</button></span>)}</nav>
+      <div className="destination-list">
+        {folders.isPending ? <LoadingState compact label="Loading folders…" /> : folders.isError ? <ErrorState error={folders.error} onRetry={() => void folders.refetch()} /> : available.length ? available.map((folder) => <button key={folder.id} onClick={() => setPath((current) => [...current, { id: folder.id, name: folder.name }])} type="button"><Folder fill="currentColor" size={19} /><span>{folder.name}</span><ChevronRight size={15} /></button>) : <EmptyState title="No folders here" description="Choose this destination or go back up the path." />}
+      </div>
+      {transfer.error ? <p className="form-error">{describeError(transfer.error)}</p> : null}
+    </Modal>
+  );
+}
+
 function NewFolderDialog({ open, parentId, onClose }: { open: boolean; parentId: string | null; onClose: () => void }) {
   const [name, setName] = useState("");
   const queryClient = useQueryClient();
@@ -304,7 +346,7 @@ function ConfirmDialog({ node, action, onClose, onConfirm, pending, error }: { n
 function Breadcrumbs({ page, collection }: { page: NodePage; collection: Collection }) {
   if (collection !== "files") return null;
   const crumbs = page.breadcrumbs.length ? page.breadcrumbs : [{ id: null, name: "My files" }];
-  return <nav aria-label="Breadcrumb" className="breadcrumbs">{crumbs.map((crumb, index) => <span key={crumb.id ?? "root"}>{index ? <ChevronRight size={14} /> : null}{index === crumbs.length - 1 ? <strong>{crumb.name}</strong> : <Link to={crumb.id ? "/files/$folderId" : "/files"} params={crumb.id ? { folderId: crumb.id } : undefined}>{crumb.name}</Link>}</span>)}</nav>;
+  return <nav aria-label="Breadcrumb" className="breadcrumbs">{crumbs.map((crumb, index) => <span key={crumb.id ?? "root"}>{index ? <ChevronRight size={14} /> : null}{index === crumbs.length - 1 ? <strong>{crumb.name}</strong> : crumb.id ? <Link to="/files/$folderId" params={{ folderId: crumb.id }}>{crumb.name}</Link> : <Link to="/files">{crumb.name}</Link>}</span>)}</nav>;
 }
 
 export function FileBrowser({ collection, folderId = null, query = "" }: { collection: Collection; folderId?: string | null; query?: string }) {
@@ -318,10 +360,13 @@ export function FileBrowser({ collection, folderId = null, query = "" }: { colle
   const [details, setDetails] = useState<ArcaNode | null>(null);
   const [renaming, setRenaming] = useState<ArcaNode | null>(null);
   const [sharing, setSharing] = useState<ArcaNode[]>([]);
+  const [destination, setDestination] = useState<{ node: ArcaNode; mode: "move" | "copy" } | null>(null);
   const [confirm, setConfirm] = useState<{ node: ArcaNode; action: "trash" | "purge" } | null>(null);
   const [newFolder, setNewFolder] = useState(false);
+  const [dragActive, setDragActive] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
-  const { addFiles } = useUploads();
+  const folderInput = useRef<HTMLInputElement>(null);
+  const { addFiles, addFolderTree } = useUploads();
   const queryClient = useQueryClient();
   const data = useQuery({
     queryKey: ["nodes", collection, folderId, query, sort, order],
@@ -340,12 +385,20 @@ export function FileBrowser({ collection, folderId = null, query = "" }: { colle
   useEffect(() => {
     const open = () => setNewFolder(true);
     window.addEventListener("arca:new-folder", open);
+    folderInput.current?.setAttribute("webkitdirectory", "");
+    folderInput.current?.setAttribute("directory", "");
     return () => window.removeEventListener("arca:new-folder", open);
   }, []);
 
   const nodes = data.data?.items ?? [];
   const selectedNodes = nodes.filter((node) => selected.has(node.id));
-  const setView = (next: ViewMode) => void navigate({ search: (previous) => ({ ...previous, view: next }) });
+  const updateUrlPreference = (key: "view" | "sort", value: string) => {
+    const url = new URL(window.location.href);
+    url.searchParams.set(key, value);
+    window.history.replaceState(window.history.state, "", url);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  };
+  const setView = (next: ViewMode) => updateUrlPreference("view", next);
   const toggleSelect = useCallback((id: string, checked: boolean) => setSelected((current) => { const next = new Set(current); if (checked) next.add(id); else next.delete(id); return next; }), []);
   const openNode = (node: ArcaNode) => node.kind === "folder" ? void navigate({ to: "/files/$folderId", params: { folderId: node.id } }) : setPreview(node);
   const copy = collectionCopy[collection];
@@ -366,30 +419,38 @@ export function FileBrowser({ collection, folderId = null, query = "" }: { colle
 
   return (
     <div className={`files-layout ${details ? "files-layout--details" : ""}`}>
-      <section className="file-browser">
+      <section
+        className={`file-browser ${dragActive ? "file-browser--drag" : ""}`}
+        onDragEnter={(event) => { if (collection === "files" && event.dataTransfer.types.includes("Files")) { event.preventDefault(); setDragActive(true); } }}
+        onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragActive(false); }}
+        onDragOver={(event) => { if (collection === "files") event.preventDefault(); }}
+        onDrop={(event) => { if (collection === "files") { event.preventDefault(); setDragActive(false); const files = Array.from(event.dataTransfer.files); if (files.length) addFiles(files, folderId); } }}
+      >
+        {dragActive ? <div className="drop-overlay"><Upload size={25} /><strong>Drop files into this folder</strong><span>Uploads begin immediately and remain resumable.</span></div> : null}
         {data.data ? <Breadcrumbs collection={collection} page={data.data} /> : null}
         <div className="page-title-row"><div className="page-heading"><h1>{title}</h1><p>{copy.subtitle}</p></div>{collection === "trash" ? <StatusPill tone="neutral">30-day retention</StatusPill> : null}</div>
         <div className="file-toolbar">
           {selected.size ? (
             <div className="selection-toolbar"><button className="selection-count" onClick={() => setSelected(new Set())} type="button"><X size={15} />{selected.size} selected</button>{selectedNodes.every((node) => node.capabilities.share) && collection !== "trash" ? <Button variant="secondary" onClick={() => setSharing(selectedNodes)}><Share2 size={16} />Share</Button> : null}{selectedNodes.length === 1 ? <Button variant="ghost" onClick={() => favorite.mutate({ node: selectedNodes[0]!, next: !selectedNodes[0]!.favorite })}><Star fill={selectedNodes[0]?.favorite ? "currentColor" : "none"} size={16} />{selectedNodes[0]?.favorite ? "Unstar" : "Star"}</Button> : null}</div>
           ) : (
-            <div className="file-toolbar__primary">{collection === "files" ? <><Button onClick={() => fileInput.current?.click()}><Upload size={17} />Upload</Button><Button variant="secondary" onClick={() => setNewFolder(true)}><Plus size={17} />New folder</Button><input className="sr-only" multiple ref={fileInput} type="file" onChange={(event) => { const files = Array.from(event.target.files ?? []); if (files.length) addFiles(files, folderId); event.target.value = ""; }} /></> : null}</div>
+            <div className="file-toolbar__primary">{collection === "files" ? <><Button onClick={() => fileInput.current?.click()}><Upload size={17} />Upload</Button><Button variant="secondary" onClick={() => setNewFolder(true)}><Plus size={17} />New folder</Button><Button className="desktop-folder-upload" variant="ghost" onClick={() => folderInput.current?.click()}><FolderInput size={17} />Upload folder</Button><input className="sr-only" multiple ref={fileInput} type="file" onChange={(event) => { const files = Array.from(event.target.files ?? []); if (files.length) addFiles(files, folderId); event.target.value = ""; }} /><input className="sr-only" multiple ref={folderInput} type="file" onChange={(event) => { const files = Array.from(event.target.files ?? []); if (files.length) void addFolderTree(files, folderId); event.target.value = ""; }} /></> : null}</div>
           )}
           <div className="file-toolbar__view">
-            <label className="sort-select">Sort <select onChange={(event) => void navigate({ search: (previous) => ({ ...previous, sort: event.target.value }) })} value={sort}><option value="name">Name</option><option value="updated_at">Modified</option><option value="size_bytes">Size</option></select><ChevronDown size={14} /></label>
+            <label className="sort-select">Sort <select onChange={(event) => updateUrlPreference("sort", event.target.value)} value={sort}><option value="name">Name</option><option value="updated_at">Modified</option><option value="size_bytes">Size</option></select><ChevronDown size={14} /></label>
             <div className="segmented" aria-label="View style"><IconButton className={view === "list" ? "active" : ""} label="List view" onClick={() => setView("list")}><List size={17} /></IconButton><IconButton className={view === "grid" ? "active" : ""} label="Grid view" onClick={() => setView("grid")}><Grid2X2 size={17} /></IconButton></div>
           </div>
         </div>
         {data.isPending ? <SkeletonRows /> : data.isError ? <ErrorState error={data.error} onRetry={() => void data.refetch()} /> : nodes.length === 0 ? <EmptyState icon={collection === "trash" ? "archive" : "empty"} title={copy.emptyTitle} description={copy.emptyDescription} action={collection === "files" ? <Button onClick={() => fileInput.current?.click()}><Upload size={17} />Upload your first file</Button> : undefined} /> : view === "grid" ? (
-          <FileGrid collection={collection} nodes={nodes} onDetails={setDetails} onPreview={openNode} onPurge={(node) => setConfirm({ node, action: "purge" })} onRename={setRenaming} onRestore={(node) => action.mutate({ node, kind: "restore" })} onSelect={toggleSelect} onShare={(node) => setSharing([node])} onTrash={(node) => setConfirm({ node, action: "trash" })} selected={selected} />
+          <FileGrid collection={collection} nodes={nodes} onCopy={(node) => setDestination({ node, mode: "copy" })} onDetails={setDetails} onMove={(node) => setDestination({ node, mode: "move" })} onPreview={openNode} onPurge={(node) => setConfirm({ node, action: "purge" })} onRename={setRenaming} onRestore={(node) => action.mutate({ node, kind: "restore" })} onSelect={toggleSelect} onShare={(node) => setSharing([node])} onTrash={(node) => setConfirm({ node, action: "trash" })} selected={selected} />
         ) : (
-          <FileList collection={collection} nodes={nodes} onDetails={setDetails} onPreview={openNode} onPurge={(node) => setConfirm({ node, action: "purge" })} onRename={setRenaming} onRestore={(node) => action.mutate({ node, kind: "restore" })} onSelect={toggleSelect} onShare={(node) => setSharing([node])} onTrash={(node) => setConfirm({ node, action: "trash" })} selected={selected} />
+          <FileList collection={collection} nodes={nodes} onCopy={(node) => setDestination({ node, mode: "copy" })} onDetails={setDetails} onMove={(node) => setDestination({ node, mode: "move" })} onPreview={openNode} onPurge={(node) => setConfirm({ node, action: "purge" })} onRename={setRenaming} onRestore={(node) => action.mutate({ node, kind: "restore" })} onSelect={toggleSelect} onShare={(node) => setSharing([node])} onTrash={(node) => setConfirm({ node, action: "trash" })} selected={selected} />
         )}
       </section>
       <DetailsPanel node={details} onClose={() => setDetails(null)} />
       <PreviewDialog node={preview} onClose={() => setPreview(null)} />
       <RenameDialog node={renaming} onClose={() => setRenaming(null)} />
       <ShareDialog nodes={sharing} onClose={() => setSharing([])} />
+      <DestinationDialog onClose={() => setDestination(null)} operation={destination} />
       <NewFolderDialog onClose={() => setNewFolder(false)} open={newFolder} parentId={folderId} />
       <ConfirmDialog action={confirm?.action ?? "trash"} error={action.error} node={confirm?.node ?? null} onClose={() => setConfirm(null)} onConfirm={() => { if (confirm) action.mutate({ node: confirm.node, kind: confirm.action }); }} pending={action.isPending} />
     </div>
