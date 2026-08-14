@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 )
@@ -63,7 +64,8 @@ func DecodeJSON(w http.ResponseWriter, r *http.Request, destination any) error {
 	if err := decoder.Decode(destination); err != nil {
 		return fmt.Errorf("decode JSON body: %w", err)
 	}
-	if decoder.More() {
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
 		return errors.New("JSON body must contain one value")
 	}
 	return nil
