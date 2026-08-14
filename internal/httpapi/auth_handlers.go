@@ -21,10 +21,17 @@ func (s *Server) bootstrapStatus(w http.ResponseWriter, r *http.Request) {
 		s.handleError(w, r, err)
 		return
 	}
+	allowAccessRequests := true
+	if status.Initialized {
+		if err := s.runtime.Database.Reader().QueryRowContext(r.Context(), `SELECT allow_access_requests FROM instance_settings WHERE singleton = 1`).Scan(&allowAccessRequests); err != nil {
+			s.handleError(w, r, err)
+			return
+		}
+	}
 	response := map[string]any{
 		"initialized": status.Initialized, "setup_required": status.SetupRequired,
 		"instance_name":         s.runtime.Config.File.InstanceName,
-		"allow_access_requests": true,
+		"allow_access_requests": allowAccessRequests,
 	}
 	if !status.Initialized && !status.ExpiresAt.IsZero() {
 		response["setup_expires_at"] = status.ExpiresAt
@@ -244,6 +251,15 @@ func (s *Server) revokeSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) requestAccess(w http.ResponseWriter, r *http.Request) {
+	var allowed, initialized bool
+	if err := s.runtime.Database.Reader().QueryRowContext(r.Context(), `SELECT allow_access_requests, initialized FROM instance_settings WHERE singleton = 1`).Scan(&allowed, &initialized); err != nil {
+		s.handleError(w, r, err)
+		return
+	}
+	if !initialized || !allowed {
+		WriteProblem(w, r, http.StatusNotFound, "access_requests_disabled", "Access requests unavailable", "This Arca instance is not accepting account requests.")
+		return
+	}
 	var body struct {
 		Username    string `json:"username"`
 		Email       string `json:"email"`
