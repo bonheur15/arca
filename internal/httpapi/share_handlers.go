@@ -58,6 +58,17 @@ func (s *Server) createShare(w http.ResponseWriter, r *http.Request) {
 		s.handleError(w, r, err)
 		return
 	}
+	if err := s.recordRequestAudit(r, "share.created", "share", created.ID, map[string]any{
+		"root_ids": created.RootIDs, "recipient_ids": created.RecipientIDs, "permission": created.Permission,
+	}); err != nil {
+		_ = s.runtime.Shares.RevokeInternal(r.Context(), principal(r).UserID, created.ID, false)
+		s.handleError(w, r, err)
+		return
+	}
+	for _, recipientID := range created.RecipientIDs {
+		s.events.Publish(recipientID, Event{ID: randomID(8), Type: "share", Data: map[string]any{"share_id": created.ID, "action": "created"}})
+		s.events.Publish(recipientID, Event{ID: randomID(8), Type: "notification", Data: map[string]any{"kind": "share.created"}})
+	}
 	WriteJSON(w, http.StatusCreated, s.hydrateInternalShare(r, created))
 }
 
@@ -140,9 +151,18 @@ func (s *Server) shareIDs(r *http.Request, table, shareColumn, valueColumn, shar
 
 func (s *Server) revokeShare(w http.ResponseWriter, r *http.Request) {
 	p := principal(r)
-	if err := s.runtime.Shares.RevokeInternal(r.Context(), p.UserID, chi.URLParam(r, "shareID"), p.Superadmin()); err != nil {
+	shareID := chi.URLParam(r, "shareID")
+	recipients := s.shareIDs(r, "share_recipients", "share_id", "user_id", shareID)
+	if err := s.runtime.Shares.RevokeInternal(r.Context(), p.UserID, shareID, p.Superadmin()); err != nil {
 		s.handleError(w, r, err)
 		return
+	}
+	if err := s.recordRequestAudit(r, "share.revoked", "share", shareID, nil); err != nil {
+		s.handleError(w, r, err)
+		return
+	}
+	for _, recipientID := range recipients {
+		s.events.Publish(recipientID, Event{ID: randomID(8), Type: "share", Data: map[string]any{"share_id": shareID, "action": "revoked"}})
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -196,6 +216,13 @@ func (s *Server) createPublicShare(w http.ResponseWriter, r *http.Request) {
 	}
 	created, err := s.runtime.Shares.CreatePublic(r.Context(), shares.CreatePublicInput{OwnerID: principal(r).UserID, RootIDs: body.RootIDs, TTL: time.Duration(body.TTLMinutes) * time.Minute, RedemptionLimit: body.RedemptionLimit})
 	if err != nil {
+		s.handleError(w, r, err)
+		return
+	}
+	if err := s.recordRequestAudit(r, "public_share.created", "public_share", created.ID, map[string]any{
+		"root_ids": created.RootIDs, "expires_at": created.ExpiresAt, "redemption_limit": created.RedemptionLimit,
+	}); err != nil {
+		_ = s.runtime.Shares.RevokePublic(r.Context(), principal(r).UserID, created.ID, false)
 		s.handleError(w, r, err)
 		return
 	}
@@ -253,7 +280,12 @@ func (s *Server) hydratePublicShare(r *http.Request, item shares.PublicShare) ma
 
 func (s *Server) revokePublicShare(w http.ResponseWriter, r *http.Request) {
 	p := principal(r)
-	if err := s.runtime.Shares.RevokePublic(r.Context(), p.UserID, chi.URLParam(r, "shareID"), p.Superadmin()); err != nil {
+	shareID := chi.URLParam(r, "shareID")
+	if err := s.runtime.Shares.RevokePublic(r.Context(), p.UserID, shareID, p.Superadmin()); err != nil {
+		s.handleError(w, r, err)
+		return
+	}
+	if err := s.recordRequestAudit(r, "public_share.revoked", "public_share", shareID, nil); err != nil {
 		s.handleError(w, r, err)
 		return
 	}
@@ -277,6 +309,11 @@ func (s *Server) publicExchange(w http.ResponseWriter, r *http.Request) {
 			// treating an internal outage as a brute-force signal.
 			s.genericPublicFailure(w, r)
 		}
+		return
+	}
+	if err := s.recordRequestAudit(r, "public_share.redeemed", "public_share", session.ShareID, nil); err != nil {
+		_ = s.runtime.Shares.RevokePublic(r.Context(), "", session.ShareID, true)
+		s.handleError(w, r, err)
 		return
 	}
 	secure := s.cookiePolicy().Secure
