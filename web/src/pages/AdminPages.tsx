@@ -18,6 +18,7 @@ import {
   Server,
   Settings,
   ShieldCheck,
+  Trash2,
   UserCheck,
   UserRoundCog,
   Users,
@@ -63,7 +64,7 @@ function CreateUserDialog({ open, onClose }: { open: boolean; onClose: () => voi
   return <Modal open={open} onOpenChange={(value) => { if (!value) onClose(); }} title="Create an account" description="Provision the identity without sending an invitation. The user signs in later with Magic Auth."><form className="dialog-form" onSubmit={(event) => { event.preventDefault(); create.mutate(); }}><div className="form-grid"><Field label="Username"><input autoFocus minLength={3} onChange={(event) => setForm({ ...form, username: event.target.value })} required value={form.username} /></Field><Field label="Email"><input onChange={(event) => setForm({ ...form, email: event.target.value })} required type="email" value={form.email} /></Field><Field label="Display name"><input onChange={(event) => setForm({ ...form, displayName: event.target.value })} value={form.displayName} /></Field><Field label="Role"><select onChange={(event) => setForm({ ...form, role: event.target.value })} value={form.role}><option value="member">Member</option><option value="superadmin">Superadmin</option></select></Field><Field label="Storage quota"><div className="input-suffix"><input min={1} onChange={(event) => setForm({ ...form, quotaGb: Number(event.target.value) })} type="number" value={form.quotaGb} /><span>GB</span></div></Field></div>{create.error ? <p className="form-error">{describeError(create.error)}</p> : null}<div className="dialog-actions"><Button variant="ghost" onClick={onClose} type="button">Cancel</Button><Button disabled={create.isPending}>{create.isPending ? "Provisioning…" : "Create account"}</Button></div></form></Modal>;
 }
 
-function UserDialog({ user, onClose }: { user: User | null; onClose: () => void }) {
+function UserDialog({ user, lastActiveSuperadmin, onClose, onDelete }: { user: User | null; lastActiveSuperadmin: boolean; onClose: () => void; onDelete: (user: User) => void }) {
   const queryClient = useQueryClient();
   const [quotaGb, setQuotaGb] = useState(user ? Math.max(1, Math.round(user.quota.quotaBytes / 1024 ** 3)) : 50);
   const [role, setRole] = useState(user?.role ?? "member");
@@ -72,15 +73,42 @@ function UserDialog({ user, onClose }: { user: User | null; onClose: () => void 
   const update = useMutation({ mutationFn: (input: Record<string, unknown>) => api.updateUser(user?.id ?? "", input), onSuccess: async () => { await queryClient.invalidateQueries({ queryKey: ["admin-users"] }); onClose(); } });
   const support = useMutation({ mutationFn: () => api.startSupportAccess(user?.id ?? "", supportReason), onSuccess: () => { window.location.assign(`/files?support_user=${user?.id ?? ""}`); } });
   if (!user) return null;
-  const suspendAction = user.state === "suspended" ? "activate" : "suspend";
+  const canRestore = user.state === "suspended" || user.state === "deletion_pending";
+  const accountLocked = user.state === "deletion_pending" || user.state === "deleted";
+  const canScheduleDeletion = !lastActiveSuperadmin && (user.state === "active" || user.state === "over_quota" || user.state === "suspended");
   return (
     <Modal open onOpenChange={(open) => { if (!open) onClose(); }} title={user.displayName || user.username} description={`${user.email} · @${user.username}`} wide>
       <div className="user-admin-summary"><span className="avatar avatar--large">{initials(user.displayName || user.username)}</span><div><StatusPill tone={stateTone(user.state)}>{user.state.replace("_", " ")}</StatusPill><StatusPill tone={user.role === "superadmin" ? "accent" : "neutral"}>{user.role}</StatusPill></div></div>
+      {user.state === "deletion_pending" ? <div className="notice notice--warning deletion-notice" role="status"><Clock3 size={18} /><div><strong>Deletion is scheduled</strong><p>Access and shares have been revoked. Restore this account to keep it. Recovery deadline: {user.deletionDueAt ? formatRelativeDate(user.deletionDueAt) : "within seven days"}.</p></div></div> : null}
+      {user.state === "deleted" ? <div className="notice notice--warning deletion-notice" role="status"><Trash2 size={18} /><div><strong>This account is deleted</strong><p>Account controls and support access are no longer available.</p></div></div> : null}
       <div className="admin-dialog-grid">
-        <section><h3>Account controls</h3><Field label="Role"><select onChange={(event) => setRole(event.target.value as User["role"])} value={role}><option value="member">Member</option><option value="superadmin">Superadmin</option></select></Field><Field label="Storage quota"><div className="input-suffix"><input min={1} onChange={(event) => setQuotaGb(Number(event.target.value))} type="number" value={quotaGb} /><span>GB</span></div></Field><div className="dialog-actions dialog-actions--start"><Button disabled={update.isPending} onClick={() => update.mutate({ role, quotaBytes: quotaGb * 1024 ** 3 })}>Save controls</Button><Button disabled={update.isPending} onClick={() => update.mutate({ action: suspendAction })} variant={suspendAction === "suspend" ? "danger" : "secondary"}>{suspendAction === "suspend" ? "Suspend account" : "Restore account"}</Button></div></section>
-        <section><h3>Audited support access</h3><p className="muted">Open this user’s files read-only for 15 minutes. Every opened item is recorded.</p><Field hint="Required, at least 10 characters" label="Reason"><textarea minLength={10} onChange={(event) => setSupportReason(event.target.value)} rows={3} value={supportReason} /></Field><Button disabled={supportReason.trim().length < 10 || support.isPending} onClick={() => support.mutate()} variant="secondary"><LifeBuoy size={16} />Begin support session</Button></section>
+        <section><h3>Account controls</h3><Field label="Role"><select disabled={accountLocked} onChange={(event) => setRole(event.target.value as User["role"])} value={role}><option disabled={lastActiveSuperadmin} value="member">Member</option><option value="superadmin">Superadmin</option></select></Field><Field label="Storage quota"><div className="input-suffix"><input disabled={accountLocked} min={1} onChange={(event) => setQuotaGb(Number(event.target.value))} type="number" value={quotaGb} /><span>GB</span></div></Field>{lastActiveSuperadmin ? <p className="muted">Promote another active superadmin before demoting, suspending, or deleting this account.</p> : null}<div className="dialog-actions dialog-actions--start"><Button disabled={accountLocked || update.isPending || (lastActiveSuperadmin && role !== "superadmin")} onClick={() => update.mutate({ role, quotaBytes: quotaGb * 1024 ** 3 })}>Save controls</Button>{user.state !== "deleted" ? <Button disabled={update.isPending || (lastActiveSuperadmin && !canRestore)} onClick={() => update.mutate({ action: canRestore ? "restore" : "suspend" })} variant={canRestore ? "secondary" : "danger"}>{canRestore ? user.state === "deletion_pending" ? "Restore during recovery" : "Restore account" : "Suspend account"}</Button> : null}</div></section>
+        <section><h3>Audited support access</h3><p className="muted">Open this user’s files read-only for 15 minutes. Every opened item is recorded.</p><Field hint="Required, at least 10 characters" label="Reason"><textarea disabled={user.state === "deleted"} minLength={10} onChange={(event) => setSupportReason(event.target.value)} rows={3} value={supportReason} /></Field><Button disabled={user.state === "deleted" || supportReason.trim().length < 10 || support.isPending} onClick={() => support.mutate()} variant="secondary"><LifeBuoy size={16} />Begin support session</Button></section>
       </div>
-      {update.error || support.error ? <p className="form-error">{describeError(update.error ?? support.error)}</p> : null}
+      {canScheduleDeletion ? <section className="account-danger"><div><h3>Schedule account deletion</h3><p>Immediately revoke access and begin a seven-day recovery window. Final content disposition is handled separately.</p></div><Button disabled={update.isPending} onClick={() => onDelete(user)} variant="danger"><Trash2 size={16} />Schedule deletion</Button></section> : null}
+      {update.error || support.error ? <p className="form-error" role="alert">{describeError(update.error ?? support.error)}</p> : null}
+    </Modal>
+  );
+}
+
+function DeleteUserDialog({ user, onClose }: { user: User | null; onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const [confirmation, setConfirmation] = useState("");
+  useEffect(() => setConfirmation(""), [user]);
+  const schedule = useMutation({
+    mutationFn: () => api.updateUser(user?.id ?? "", { action: "delete" }),
+    onSuccess: async () => { await queryClient.invalidateQueries({ queryKey: ["admin-users"] }); onClose(); },
+  });
+  if (!user) return null;
+  const confirmed = confirmation === user.username;
+  return (
+    <Modal open onOpenChange={(open) => { if (!open) onClose(); }} title="Schedule account deletion?" description={`This immediately removes access for @${user.username} and starts the seven-day recovery window.`}>
+      <form className="dialog-form" onSubmit={(event) => { event.preventDefault(); if (confirmed) schedule.mutate(); }}>
+        <div className="notice notice--warning"><AlertTriangle size={18} /><p>Existing sessions lose access immediately; API tokens, internal shares, and public shares are revoked. The account can be restored during recovery.</p></div>
+        <Field hint="This action schedules deletion only; ownership transfer or permanent purge is not selected here." label={`Type ${user.username} to confirm`}><input autoComplete="off" autoFocus onChange={(event) => setConfirmation(event.target.value)} spellCheck={false} value={confirmation} /></Field>
+        {schedule.error ? <p className="form-error" role="alert">{describeError(schedule.error)}</p> : null}
+        <div className="dialog-actions"><Button onClick={onClose} type="button" variant="ghost">Cancel</Button><Button disabled={!confirmed || schedule.isPending} variant="danger">{schedule.isPending ? "Scheduling…" : "Schedule deletion"}</Button></div>
+      </form>
     </Modal>
   );
 }
@@ -89,11 +117,15 @@ export function AdminUsersPage() {
   const users = useQuery({ queryKey: ["admin-users"], queryFn: api.adminUsers });
   const [createOpen, setCreateOpen] = useState(false);
   const [selected, setSelected] = useState<User | null>(null);
+  const [deleting, setDeleting] = useState<User | null>(null);
+  const activeSuperadmins = users.data?.filter((user) => user.role === "superadmin" && (user.state === "active" || user.state === "over_quota")) ?? [];
+  const selectedIsLastSuperadmin = Boolean(selected && selected.role === "superadmin" && activeSuperadmins.length === 1 && activeSuperadmins[0]?.id === selected.id);
   return (
     <AdminLayout title="People" description="Accounts, roles, quotas, and recovery for this Arca." action={<Button onClick={() => setCreateOpen(true)}><Plus size={17} />Create user</Button>}>
       {users.isPending ? <SkeletonRows /> : users.isError ? <ErrorState error={users.error} onRetry={() => void users.refetch()} /> : !users.data.length ? <EmptyState title="No accounts" description="Create the first member account when your team is ready." /> : <div className="admin-table"><div className="admin-table__head"><span>User</span><span>Role</span><span>Status</span><span>Storage</span><span>Last sign-in</span><span /></div>{users.data.map((user) => { const percent = user.quota.unlimited || !user.quota.quotaBytes ? 0 : Math.min(100, user.quota.usedBytes / user.quota.quotaBytes * 100); return <button className="admin-table__row" key={user.id} onClick={() => setSelected(user)} type="button"><span className="person-cell"><i className="avatar">{initials(user.displayName || user.username)}</i><span><strong>{user.displayName || user.username}</strong><small>{user.email}</small></span></span><span><StatusPill tone={user.role === "superadmin" ? "accent" : "neutral"}>{user.role}</StatusPill></span><span><StatusPill tone={stateTone(user.state)}>{user.state.replace("_", " ")}</StatusPill></span><span className="storage-cell"><span><i style={{ width: `${percent}%` }} /></span><small>{user.quota.unlimited ? `${formatBytes(user.quota.usedBytes)} used` : `${formatBytes(user.quota.usedBytes)} / ${formatBytes(user.quota.quotaBytes)}`}</small></span><span>{formatRelativeDate(user.lastSignInAt)}</span><span>View</span></button>; })}</div>}
       <CreateUserDialog onClose={() => setCreateOpen(false)} open={createOpen} />
-      <UserDialog onClose={() => setSelected(null)} user={selected} />
+      <UserDialog lastActiveSuperadmin={selectedIsLastSuperadmin} onClose={() => setSelected(null)} onDelete={(user) => { setSelected(null); setDeleting(user); }} user={selected} />
+      <DeleteUserDialog onClose={() => setDeleting(null)} user={deleting} />
     </AdminLayout>
   );
 }
