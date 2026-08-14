@@ -102,7 +102,7 @@ func (s *Service) GrantSupportAccess(ctx context.Context, targetUserID, reason s
 		return nil, err
 	}
 	if err := s.record(ctx, mutation, "support_access.granted", "support_access", access.ID, map[string]any{"target_user_id": targetUserID, "reason": access.Reason, "expires_at": access.ExpiresAt}); err != nil {
-		return access, err
+		return access, committedAudit(err)
 	}
 	return access, nil
 }
@@ -116,7 +116,7 @@ func (s *Service) RevokeSupportAccess(ctx context.Context, accessID string, muta
 		return nil, err
 	}
 	if err := s.record(ctx, mutation, "support_access.revoked", "support_access", access.ID, map[string]any{"target_user_id": access.TargetUserID}); err != nil {
-		return access, err
+		return access, committedAudit(err)
 	}
 	return access, nil
 }
