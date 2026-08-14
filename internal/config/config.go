@@ -149,8 +149,26 @@ func Load(overrides Overrides) (Runtime, error) {
 }
 
 func EnsureLayout(layout Layout) error {
-	dirs := []string{layout.Root, layout.DatabaseDir, layout.BlobDir, layout.StagingDir, layout.PreviewDir, layout.LockDir}
+	// Include intermediate directories explicitly. Besides enforcing 0700 on
+	// every directory in the data tree, this prevents MkdirAll from following a
+	// pre-existing "storage" or "cache" symlink outside the instance root.
+	dirs := []string{
+		layout.Root,
+		layout.DatabaseDir,
+		filepath.Dir(layout.BlobDir),
+		layout.BlobDir,
+		layout.StagingDir,
+		filepath.Dir(layout.PreviewDir),
+		layout.PreviewDir,
+		layout.LockDir,
+	}
+	seen := make(map[string]struct{}, len(dirs))
 	for _, dir := range dirs {
+		dir = filepath.Clean(dir)
+		if _, ok := seen[dir]; ok {
+			continue
+		}
+		seen[dir] = struct{}{}
 		if err := rejectSymlink(dir); err != nil {
 			return err
 		}
