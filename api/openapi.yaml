@@ -25,14 +25,23 @@ paths:
       operationId: getBootstrapStatus
       responses:
         '200': {$ref: '#/components/responses/BootstrapStatus'}
-  /bootstrap/configure:
+  /bootstrap/validate:
     post:
       tags: [Bootstrap]
       security: []
-      operationId: configureBootstrap
+      operationId: validateBootstrapCode
       requestBody: {$ref: '#/components/requestBodies/JSON'}
       responses:
         '200': {$ref: '#/components/responses/JSON'}
+        default: {$ref: '#/components/responses/Problem'}
+  /bootstrap/start:
+    post:
+      tags: [Bootstrap]
+      security: []
+      operationId: startBootstrap
+      requestBody: {$ref: '#/components/requestBodies/JSON'}
+      responses:
+        '202': {$ref: '#/components/responses/JSON'}
         default: {$ref: '#/components/responses/Problem'}
   /bootstrap/verify:
     post:
@@ -76,6 +85,21 @@ paths:
       responses:
         '204': {description: Signed out}
         default: {$ref: '#/components/responses/Problem'}
+  /sessions:
+    get:
+      tags: [Authentication]
+      operationId: listSessions
+      responses:
+        '200': {$ref: '#/components/responses/List'}
+        default: {$ref: '#/components/responses/Problem'}
+  /sessions/{sessionId}:
+    delete:
+      tags: [Authentication]
+      operationId: revokeSession
+      parameters: [{name: sessionId, in: path, required: true, schema: {type: string}}]
+      responses:
+        '204': {description: Session revoked}
+        default: {$ref: '#/components/responses/Problem'}
   /session:
     get:
       tags: [Authentication]
@@ -93,11 +117,11 @@ paths:
         '202': {$ref: '#/components/responses/JSON'}
         default: {$ref: '#/components/responses/Problem'}
   /access-requests/status:
-    post:
+    get:
       tags: [Accounts]
       security: []
       operationId: getAccessRequestStatus
-      requestBody: {$ref: '#/components/requestBodies/JSON'}
+      parameters: [{name: token, in: query, required: true, schema: {type: string}}]
       responses:
         '200': {$ref: '#/components/responses/JSON'}
         default: {$ref: '#/components/responses/Problem'}
@@ -105,6 +129,13 @@ paths:
     get:
       tags: [Accounts]
       operationId: getMe
+      responses:
+        '200': {$ref: '#/components/responses/User'}
+        default: {$ref: '#/components/responses/Problem'}
+    patch:
+      tags: [Accounts]
+      operationId: updateMe
+      requestBody: {$ref: '#/components/requestBodies/JSON'}
       responses:
         '200': {$ref: '#/components/responses/User'}
         default: {$ref: '#/components/responses/Problem'}
@@ -130,6 +161,7 @@ paths:
       operationId: listNodes
       parameters:
         - {name: parent_id, in: query, schema: {type: string, format: uuid}}
+        - {name: support_user, in: query, schema: {type: string, format: uuid}, description: Target user for an active audited support session.}
         - {$ref: '#/components/parameters/Cursor'}
         - {$ref: '#/components/parameters/Limit'}
       responses:
@@ -159,18 +191,57 @@ paths:
       responses:
         '200': {$ref: '#/components/responses/Node'}
         default: {$ref: '#/components/responses/Problem'}
-  /nodes/{nodeId}/{action}:
-    parameters:
-      - {$ref: '#/components/parameters/NodeID'}
-      - {name: action, in: path, required: true, schema: {type: string, enum: [move, copy, trash, restore, purge]}}
+  /nodes/{nodeId}/move:
     post:
       tags: [Files]
-      operationId: mutateNode
-      parameters: [{$ref: '#/components/parameters/IfMatch'}]
+      operationId: moveNode
+      parameters: [{$ref: '#/components/parameters/NodeID'}, {$ref: '#/components/parameters/IfMatch'}, {$ref: '#/components/parameters/IdempotencyKey'}]
       requestBody: {$ref: '#/components/requestBodies/JSON'}
       responses:
+        '200': {$ref: '#/components/responses/Node'}
+        default: {$ref: '#/components/responses/Problem'}
+  /nodes/{nodeId}/copy:
+    post:
+      tags: [Files]
+      operationId: copyNode
+      parameters: [{$ref: '#/components/parameters/NodeID'}, {$ref: '#/components/parameters/IfMatch'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {$ref: '#/components/requestBodies/JSON'}
+      responses:
+        '201': {$ref: '#/components/responses/Node'}
+        default: {$ref: '#/components/responses/Problem'}
+  /nodes/{nodeId}/save-copy:
+    post:
+      tags: [Files]
+      operationId: saveSharedFileCopy
+      parameters: [{$ref: '#/components/parameters/NodeID'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {$ref: '#/components/requestBodies/JSON'}
+      responses:
+        '201': {$ref: '#/components/responses/Upload'}
+        default: {$ref: '#/components/responses/Problem'}
+  /nodes/{nodeId}/trash:
+    post:
+      tags: [Files]
+      operationId: trashNode
+      parameters: [{$ref: '#/components/parameters/NodeID'}, {$ref: '#/components/parameters/IfMatch'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
+        '200': {$ref: '#/components/responses/Node'}
+        default: {$ref: '#/components/responses/Problem'}
+  /nodes/{nodeId}/restore:
+    post:
+      tags: [Files]
+      operationId: restoreNode
+      parameters: [{$ref: '#/components/parameters/NodeID'}, {$ref: '#/components/parameters/IfMatch'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {$ref: '#/components/requestBodies/JSON'}
+      responses:
+        '200': {$ref: '#/components/responses/Node'}
+        default: {$ref: '#/components/responses/Problem'}
+  /nodes/{nodeId}/purge:
+    post:
+      tags: [Files]
+      operationId: purgeNode
+      parameters: [{$ref: '#/components/parameters/NodeID'}, {$ref: '#/components/parameters/IfMatch'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      responses:
         '200': {$ref: '#/components/responses/JSON'}
-        '204': {description: Completed without a representation}
         default: {$ref: '#/components/responses/Problem'}
   /nodes/bulk:
     post:
@@ -179,6 +250,14 @@ paths:
       requestBody: {$ref: '#/components/requestBodies/JSON'}
       responses:
         '200': {$ref: '#/components/responses/JSON'}
+        default: {$ref: '#/components/responses/Problem'}
+  /nodes/archive:
+    post:
+      tags: [Files]
+      operationId: downloadNodeArchive
+      requestBody: {$ref: '#/components/requestBodies/JSON'}
+      responses:
+        '200': {description: Streamed ZIP64 archive, content: {application/zip: {schema: {type: string, format: binary}}}}
         default: {$ref: '#/components/responses/Problem'}
   /files/{nodeId}/content:
     get:
@@ -196,6 +275,17 @@ paths:
       parameters: [{$ref: '#/components/parameters/NodeID'}]
       responses:
         '200': {$ref: '#/components/responses/List'}
+        default: {$ref: '#/components/responses/Problem'}
+  /files/{nodeId}/versions/{versionId}/restore:
+    post:
+      tags: [Files]
+      operationId: restoreFileVersion
+      parameters:
+        - {$ref: '#/components/parameters/NodeID'}
+        - {name: versionId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {$ref: '#/components/parameters/IfMatch'}
+      responses:
+        '201': {$ref: '#/components/responses/FileVersion'}
         default: {$ref: '#/components/responses/Problem'}
   /search:
     get:
@@ -215,11 +305,27 @@ paths:
       tags: [Files]
       operationId: listFavorites
       responses: {'200': {$ref: '#/components/responses/List'}, default: {$ref: '#/components/responses/Problem'}}
-    post:
+  /favorites/{nodeId}:
+    put:
       tags: [Files]
       operationId: addFavorite
-      requestBody: {$ref: '#/components/requestBodies/JSON'}
+      parameters: [{$ref: '#/components/parameters/NodeID'}]
       responses: {'204': {description: Favorite added}, default: {$ref: '#/components/responses/Problem'}}
+    delete:
+      tags: [Files]
+      operationId: removeFavorite
+      parameters: [{$ref: '#/components/parameters/NodeID'}]
+      responses: {'204': {description: Favorite removed}, default: {$ref: '#/components/responses/Problem'}}
+  /trash:
+    get:
+      tags: [Files]
+      operationId: listTrash
+      responses: {'200': {$ref: '#/components/responses/List'}, default: {$ref: '#/components/responses/Problem'}}
+  /shared:
+    get:
+      tags: [Sharing]
+      operationId: listSharedWithMe
+      responses: {'200': {$ref: '#/components/responses/List'}, default: {$ref: '#/components/responses/Problem'}}
   /uploads:
     post:
       tags: [Uploads]
@@ -236,7 +342,7 @@ paths:
     head:
       tags: [Uploads]
       operationId: inspectUpload
-      responses: {'200': {description: Current upload offset}, default: {$ref: '#/components/responses/Problem'}}
+      responses: {'204': {description: Current upload offset}, default: {$ref: '#/components/responses/Problem'}}
     patch:
       tags: [Uploads]
       operationId: appendUpload
@@ -266,6 +372,10 @@ paths:
       parameters: [{$ref: '#/components/parameters/ShareID'}]
       responses: {'204': {description: Share revoked}, default: {$ref: '#/components/responses/Problem'}}
   /public-shares:
+    get:
+      tags: [Sharing]
+      operationId: listPublicShares
+      responses: {'200': {$ref: '#/components/responses/List'}, default: {$ref: '#/components/responses/Problem'}}
     post:
       tags: [Sharing]
       operationId: createPublicShare
@@ -295,6 +405,16 @@ paths:
       security: []
       operationId: getPublicBundle
       responses: {'200': {$ref: '#/components/responses/List'}, default: {$ref: '#/components/responses/Problem'}}
+  /public/files/{nodeId}/content:
+    get:
+      tags: [Sharing]
+      security: []
+      operationId: downloadPublicFile
+      parameters: [{$ref: '#/components/parameters/NodeID'}]
+      responses:
+        '200': {description: Public file stream, content: {application/octet-stream: {schema: {type: string, format: binary}}}}
+        '206': {description: Partial public file stream}
+        default: {$ref: '#/components/responses/Problem'}
   /tokens:
     get:
       tags: [Developer]
@@ -319,6 +439,17 @@ paths:
     get:
       operationId: streamEvents
       responses: {'200': {description: Server-sent event stream, content: {text/event-stream: {schema: {type: string}}}}}
+  /support-access:
+    get:
+      tags: [Administration]
+      operationId: getActiveSupportAccess
+      responses: {'200': {$ref: '#/components/responses/JSON'}, default: {$ref: '#/components/responses/Problem'}}
+  /support-access/{accessId}:
+    delete:
+      tags: [Administration]
+      operationId: endSupportAccess
+      parameters: [{name: accessId, in: path, required: true, schema: {type: string, format: uuid}}]
+      responses: {'204': {description: Support access ended}, default: {$ref: '#/components/responses/Problem'}}
   /admin/users:
     get:
       tags: [Administration]
@@ -341,21 +472,66 @@ paths:
       tags: [Administration]
       operationId: adminListRequests
       responses: {'200': {$ref: '#/components/responses/List'}, default: {$ref: '#/components/responses/Problem'}}
-  /admin/requests/{requestId}/{decision}:
+  /admin/requests/{requestId}:
     post:
       tags: [Administration]
       operationId: adminDecideRequest
       parameters:
         - {name: requestId, in: path, required: true, schema: {type: string, format: uuid}}
-        - {name: decision, in: path, required: true, schema: {type: string, enum: [approve, reject]}}
       requestBody: {$ref: '#/components/requestBodies/JSON'}
       responses: {'200': {$ref: '#/components/responses/JSON'}, default: {$ref: '#/components/responses/Problem'}}
-  /admin/{resource}:
+  /admin/storage:
     get:
       tags: [Administration]
-      operationId: adminGetResource
-      parameters: [{name: resource, in: path, required: true, schema: {type: string, enum: [storage, policies, jobs, audit, settings]}}]
+      operationId: adminGetStorage
       responses: {'200': {$ref: '#/components/responses/JSON'}, default: {$ref: '#/components/responses/Problem'}}
+  /admin/jobs:
+    get:
+      tags: [Administration]
+      operationId: adminListJobs
+      responses: {'200': {$ref: '#/components/responses/List'}, default: {$ref: '#/components/responses/Problem'}}
+  /admin/jobs/{jobId}/retry:
+    post:
+      tags: [Administration]
+      operationId: adminRetryJob
+      parameters: [{name: jobId, in: path, required: true, schema: {type: string, format: uuid}}]
+      responses: {'204': {description: Job requeued}, default: {$ref: '#/components/responses/Problem'}}
+  /admin/audit:
+    get:
+      tags: [Administration]
+      operationId: adminListAuditEvents
+      parameters:
+        - {$ref: '#/components/parameters/Limit'}
+        - {name: format, in: query, schema: {type: string, enum: [json, csv]}}
+      responses: {'200': {$ref: '#/components/responses/List'}, default: {$ref: '#/components/responses/Problem'}}
+  /admin/settings:
+    get:
+      tags: [Administration]
+      operationId: adminGetSettings
+      responses: {'200': {$ref: '#/components/responses/JSON'}, default: {$ref: '#/components/responses/Problem'}}
+    put:
+      tags: [Administration]
+      operationId: adminUpdateSettings
+      requestBody: {$ref: '#/components/requestBodies/JSON'}
+      responses: {'200': {$ref: '#/components/responses/JSON'}, default: {$ref: '#/components/responses/Problem'}}
+  /admin/policies/{userId}:
+    get:
+      tags: [Administration]
+      operationId: adminGetPolicy
+      parameters: [{name: userId, in: path, required: true, schema: {type: string, format: uuid}}]
+      responses: {'200': {$ref: '#/components/responses/Policy'}, default: {$ref: '#/components/responses/Problem'}}
+    put:
+      tags: [Administration]
+      operationId: adminUpdatePolicy
+      parameters: [{name: userId, in: path, required: true, schema: {type: string, format: uuid}}]
+      requestBody: {$ref: '#/components/requestBodies/JSON'}
+      responses: {'200': {$ref: '#/components/responses/Policy'}, default: {$ref: '#/components/responses/Problem'}}
+  /admin/support-access:
+    post:
+      tags: [Administration]
+      operationId: adminStartSupportAccess
+      requestBody: {$ref: '#/components/requestBodies/JSON'}
+      responses: {'201': {$ref: '#/components/responses/JSON'}, default: {$ref: '#/components/responses/Problem'}}
 components:
   securitySchemes:
     bearerAuth: {type: http, scheme: bearer, bearerFormat: ArcaPAT}
@@ -378,6 +554,9 @@ components:
     List: {description: Paginated list, content: {application/json: {schema: {$ref: '#/components/schemas/List'}}}}
     Node: {description: Node, content: {application/json: {schema: {$ref: '#/components/schemas/Node'}}}}
     User: {description: User, content: {application/json: {schema: {$ref: '#/components/schemas/User'}}}}
+    Upload: {description: Upload, content: {application/json: {schema: {$ref: '#/components/schemas/Upload'}}}}
+    FileVersion: {description: File version, content: {application/json: {schema: {$ref: '#/components/schemas/FileVersion'}}}}
+    Policy: {description: User policy, content: {application/json: {schema: {$ref: '#/components/schemas/Policy'}}}}
     Session: {description: Session, content: {application/json: {schema: {$ref: '#/components/schemas/Session'}}}}
     BootstrapStatus: {description: Bootstrap state, content: {application/json: {schema: {type: object, required: [initialized], properties: {initialized: {type: boolean}, setup_required: {type: boolean}, expires_at: {type: string, format: date-time}}}}}}
     Problem: {description: Problem detail, content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}}
@@ -420,6 +599,74 @@ components:
         capabilities: {type: array, items: {type: string}}
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
+    FileVersion:
+      type: object
+      required: [id, node_id, sequence, size_bytes, sha256, mime_type, created_by, created_at]
+      properties:
+        id: {type: string, format: uuid}
+        node_id: {type: string, format: uuid}
+        sequence: {type: integer, format: int64}
+        size_bytes: {type: integer, format: int64}
+        sha256: {type: string, pattern: '^[a-f0-9]{64}$'}
+        mime_type: {type: string}
+        created_by: {type: string, format: uuid}
+        created_at: {type: string, format: date-time}
+    Share:
+      type: object
+      required: [id, permission, roots, recipients, created_by, created_at, updated_at]
+      properties:
+        id: {type: string, format: uuid}
+        permission: {type: string, enum: [viewer, editor]}
+        roots: {type: array, items: {$ref: '#/components/schemas/Node'}}
+        recipients: {type: array, items: {$ref: '#/components/schemas/User'}}
+        expires_at: {type: string, format: date-time, nullable: true}
+        allow_editor_uploads: {type: boolean}
+        editor_byte_allowance: {type: integer, format: int64, nullable: true}
+        created_by: {type: string, format: uuid}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    PublicShare:
+      type: object
+      required: [id, roots, expires_at, redemption_limit, redemption_count, state, created_at]
+      properties:
+        id: {type: string, format: uuid}
+        roots: {type: array, items: {$ref: '#/components/schemas/Node'}}
+        expires_at: {type: string, format: date-time}
+        redemption_limit: {type: integer, minimum: 1, maximum: 10}
+        redemption_count: {type: integer, minimum: 0}
+        state: {type: string, enum: [active, expired, exhausted, revoked]}
+        created_at: {type: string, format: date-time}
+    Upload:
+      type: object
+      required: [id, state, expected_bytes, committed_bytes, expires_at, parent_id, filename, conflict_mode]
+      properties:
+        id: {type: string, format: uuid}
+        state: {type: string, enum: [pending, receiving, finalizing, completed, cancelled, expired, failed]}
+        expected_bytes: {type: integer, format: int64}
+        committed_bytes: {type: integer, format: int64}
+        expires_at: {type: string, format: date-time}
+        parent_id: {type: string, format: uuid}
+        filename: {type: string}
+        conflict_mode: {type: string, enum: [error, keep_both, replace]}
+        node_id: {type: string, format: uuid, nullable: true}
+        current_version_id: {type: string, format: uuid, nullable: true}
+    Policy:
+      type: object
+      required: [quota_bytes, unlimited, allow_internal_sharing, allow_public_sharing, allow_api_tokens]
+      properties:
+        quota_bytes: {type: integer, format: int64}
+        unlimited: {type: boolean}
+        max_file_bytes: {type: integer, format: int64}
+        max_items: {type: integer, format: int64}
+        allow_internal_sharing: {type: boolean}
+        allow_public_sharing: {type: boolean}
+        allow_api_tokens: {type: boolean}
+        max_concurrent_uploads: {type: integer}
+        max_pending_uploads: {type: integer}
+        max_active_public_shares: {type: integer}
+        max_public_ttl_minutes: {type: integer}
+        max_public_redemptions: {type: integer}
+        blocked_extensions: {type: array, items: {type: string}}
     Session:
       type: object
       required: [authenticated]
