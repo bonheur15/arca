@@ -95,7 +95,7 @@ func TestPublicExchangeLimitsCanonicalizeIPAndEnforcePrefixes(t *testing.T) {
 		{name: "IPv6 /64", ip: func(index int) string { return fmt.Sprintf("2001:db8:1:2::%x", index+1) }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			_, handler, reached := newPublicLimitHarness(&clock, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			server, handler, reached := newPublicLimitHarness(&clock, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(http.StatusNoContent)
 			}))
 			for index := 0; index < 25; index++ {
@@ -104,9 +104,14 @@ func TestPublicExchangeLimitsCanonicalizeIPAndEnforcePrefixes(t *testing.T) {
 					t.Fatalf("attempt %d status = %d", index+1, response.Code)
 				}
 			}
-			assertRateLimited(t, performPublicExchange(handler, test.ip(25)))
+			blockedAddress := test.ip(25)
+			assertRateLimited(t, performPublicExchange(handler, blockedAddress))
 			if *reached != 25 {
 				t.Fatalf("handler reached %d times, want 25", *reached)
+			}
+			blockedKey := "public-ip-minute:" + canonicalPublicIP(blockedAddress)
+			if _, retained := server.limiter.buckets[blockedKey]; retained {
+				t.Fatalf("saturated prefix retained fresh IP bucket %q", blockedKey)
 			}
 		})
 	}
@@ -121,7 +126,7 @@ func TestPublicExchangeLimitsCanonicalizeIPAndEnforcePrefixes(t *testing.T) {
 
 func TestPublicExchangeLimitsInstanceWindow(t *testing.T) {
 	clock := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
-	_, handler, reached := newPublicLimitHarness(&clock, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server, handler, reached := newPublicLimitHarness(&clock, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	for index := 0; index < 100; index++ {
@@ -134,6 +139,9 @@ func TestPublicExchangeLimitsInstanceWindow(t *testing.T) {
 	assertRateLimited(t, performPublicExchange(handler, "10.100.0.1"))
 	if *reached != 100 {
 		t.Fatalf("handler reached %d times, want 100", *reached)
+	}
+	if _, retained := server.limiter.buckets["public-ip-minute:10.100.0.1"]; retained {
+		t.Fatal("saturated instance retained a fresh IP bucket")
 	}
 }
 
