@@ -12,6 +12,7 @@ CREATE TABLE instance_settings (
     filesystem_reserve_bytes INTEGER NOT NULL DEFAULT 1073741824 CHECK (filesystem_reserve_bytes >= 0),
     allow_access_requests INTEGER NOT NULL DEFAULT 1 CHECK (allow_access_requests IN (0, 1)),
     trusted_proxy_cidrs TEXT NOT NULL DEFAULT '[]',
+    allowed_cors_origins TEXT NOT NULL DEFAULT '[]',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
