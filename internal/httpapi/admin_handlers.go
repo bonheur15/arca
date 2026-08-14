@@ -136,10 +136,12 @@ func (s *Server) adminCreateUser(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) adminUpdateUser(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Action         string         `json:"action"`
-		Role           *accounts.Role `json:"role"`
-		QuotaBytes     *int64         `json:"quotaBytes"`
-		QuotaUnlimited *bool          `json:"quotaUnlimited"`
+		Action           string                `json:"action"`
+		Role             *accounts.Role        `json:"role"`
+		QuotaBytes       *int64                `json:"quotaBytes"`
+		QuotaUnlimited   *bool                 `json:"quotaUnlimited"`
+		DeletionMode     accounts.DeletionMode `json:"deletionMode"`
+		TransferToUserID string                `json:"transferToUserId"`
 	}
 	if err := decodeBody(w, r, &body); err != nil {
 		WriteProblem(w, r, http.StatusBadRequest, "invalid_request", "Invalid request", err.Error())
@@ -181,7 +183,9 @@ func (s *Server) adminUpdateUser(w http.ResponseWriter, r *http.Request) {
 		case "activate", "restore":
 			user, err = s.runtime.Accounts.RestoreUser(r.Context(), userID, mutation)
 		case "delete":
-			user, err = s.runtime.Accounts.ScheduleDeletion(r.Context(), userID, mutation)
+			user, err = s.runtime.Accounts.ScheduleDeletion(r.Context(), userID, accounts.DeletionPlan{
+				Mode: body.DeletionMode, TransferToUserID: body.TransferToUserID,
+			}, mutation)
 		default:
 			err = accounts.ErrInvalidInput
 		}
