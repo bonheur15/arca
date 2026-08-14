@@ -40,11 +40,13 @@ describe("API boundary parsing", () => {
       state: "active",
       quota: { used_bytes: 1024, quota_bytes: 4096, unlimited: false },
       preferences: { theme_mode: "dark", accent: "teal", density: "compact", reduced_motion: 1 },
+      deletion_due_at: "2026-08-21T10:00:00Z",
     });
 
     expect(user.role).toBe("superadmin");
     expect(user.quota).toMatchObject({ usedBytes: 1024, quotaBytes: 4096 });
     expect(user.preferences).toEqual({ themeMode: "dark", accent: "teal", density: "compact", reducedMotion: true });
+    expect(user.deletionDueAt).toBe("2026-08-21T10:00:00Z");
   });
 
   it("sends the audited support target when listing a folder", async () => {
@@ -98,5 +100,24 @@ describe("API boundary parsing", () => {
     expect(policy.allowedMimeGroups).toEqual(["image", "application"]);
     expect(policy.uploadRateBytes).toBe(2_097_152);
     expect(policy.downloadRateBytes).toBeNull();
+  });
+
+  it("uses the established account deletion scheduling action", async () => {
+    const request = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({
+      id: "user-019",
+      username: "marie",
+      email: "marie@example.com",
+      state: "deletion_pending",
+      deletion_due_at: "2026-08-21T10:00:00Z",
+    }));
+
+    const user = await api.updateUser("user-019", { action: "delete" });
+
+    const [, init] = request.mock.calls[0] ?? [];
+    expect(request.mock.calls[0]?.[0]).toBe("/api/v1/admin/users/user-019");
+    expect(init).toMatchObject({ method: "PATCH", credentials: "same-origin" });
+    expect(JSON.parse(String(init?.body))).toEqual({ action: "delete" });
+    expect(user.state).toBe("deletion_pending");
+    expect(user.deletionDueAt).toBe("2026-08-21T10:00:00Z");
   });
 });
