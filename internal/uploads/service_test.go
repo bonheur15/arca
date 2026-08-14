@@ -454,6 +454,17 @@ func TestUploadExpirationAndBlobGarbageCollection(t *testing.T) {
 		blobKey, timeText(clock.Add(-time.Minute)), timeText(clock.Add(-time.Hour))); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := db.Writer().Exec(`INSERT INTO operation_leases(name, lease_until, owner, created_at, updated_at)
+		VALUES('backup', ?, 'test', ?, ?)`, timeText(clock.Add(time.Hour)), timeText(clock), timeText(clock)); err != nil {
+		t.Fatal(err)
+	}
+	count, err = service.CollectGarbage(context.Background(), 10)
+	if err != nil || count != 0 {
+		t.Fatalf("garbage collection did not pause for backup lease: count=%d error=%v", count, err)
+	}
+	if _, err := db.Writer().Exec(`DELETE FROM operation_leases WHERE name='backup'`); err != nil {
+		t.Fatal(err)
+	}
 	count, err = service.CollectGarbage(context.Background(), 10)
 	if err != nil || count != 1 {
 		t.Fatalf("garbage count = %d, error = %v", count, err)
