@@ -11,8 +11,15 @@ ENV COREPACK_HOME=/tmp/corepack \
     CI=true
 ENV PATH=${PNPM_HOME}:${PATH}
 
-RUN corepack enable \
-    && corepack install --global pnpm@10.33.0
+RUN --mount=type=cache,id=arca-corepack,target=/tmp/corepack \
+    for attempt in 1 2 3; do \
+      corepack enable && \
+      corepack install --global pnpm@10.33.0 && \
+      break; \
+      [ "$attempt" -lt 3 ] || exit 1; \
+      sleep $((attempt * 5)); \
+    done
+
 
 WORKDIR /src/web
 
