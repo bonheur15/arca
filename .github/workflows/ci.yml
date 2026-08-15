@@ -29,17 +29,16 @@ jobs:
         working-directory: web
       - run: make generate
       - run: git diff --exit-code -- internal/apitypes/openapi.generated.go web/src/api/schema.generated.ts
+      - run: pnpm build
+        working-directory: web
       - run: go vet ./...
       - run: go test -race ./...
       - run: pnpm typecheck
         working-directory: web
       - run: pnpm test
         working-directory: web
-      - run: pnpm build
-        working-directory: web
       - run: CGO_ENABLED=0 go build -trimpath -o arca ./cmd/arca
       - uses: actions/upload-artifact@v4
         with:
           name: arca-linux-amd64
           path: arca
-

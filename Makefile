@@ -37,9 +37,10 @@ dev:
 
 check: generate
 	git diff --exit-code -- internal/apitypes/openapi.generated.go web/src/api/schema.generated.ts
+	$(MAKE) build-web
 	go vet ./...
 	go test ./...
-	cd web && $(PNPM) typecheck && $(PNPM) test && $(PNPM) build
+	cd web && $(PNPM) typecheck && $(PNPM) test
 	git diff --check
 
 clean:
