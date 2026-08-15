@@ -142,11 +142,11 @@ function parsePreferences(value: unknown): UserPreferences {
   const record = object(value);
   const theme = stringAt(record, "system", "themeMode", "theme_mode");
   const density = stringAt(record, "comfortable", "density");
-  const accent = stringAt(record, "violet", "accent");
+  const accent = stringAt(record, "green", "accent");
   const allowedAccents = ["violet", "indigo", "blue", "cyan", "teal", "green", "amber", "rose"] as const;
   return {
     themeMode: theme === "light" || theme === "dark" ? theme : "system",
-    accent: allowedAccents.find((candidate) => candidate === accent) ?? "violet",
+    accent: allowedAccents.find((candidate) => candidate === accent) ?? "green",
     density: density === "compact" ? "compact" : "comfortable",
     reducedMotion: booleanAt(record, false, "reducedMotion", "reduced_motion"),
   };
