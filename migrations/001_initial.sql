@@ -33,7 +33,7 @@ CREATE TABLE users (
     reserved_bytes INTEGER NOT NULL DEFAULT 0 CHECK (reserved_bytes >= 0),
     root_node_id TEXT,
     theme_mode TEXT NOT NULL DEFAULT 'system' CHECK (theme_mode IN ('system', 'light', 'dark')),
-    accent TEXT NOT NULL DEFAULT 'violet',
+    accent TEXT NOT NULL DEFAULT 'green',
     density TEXT NOT NULL DEFAULT 'comfortable' CHECK (density IN ('compact', 'comfortable')),
     reduced_motion INTEGER NOT NULL DEFAULT 0 CHECK (reduced_motion IN (0, 1)),
     last_sign_in_at TEXT,
