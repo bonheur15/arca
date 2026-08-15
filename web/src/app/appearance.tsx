@@ -3,7 +3,7 @@ import type { UserPreferences } from "../api/types";
 
 const defaultPreferences: UserPreferences = {
   themeMode: "system",
-  accent: "violet",
+  accent: "green",
   density: "comfortable",
   reducedMotion: false,
 };
@@ -22,7 +22,7 @@ function readThemeCache(): UserPreferences {
     const parsed = JSON.parse(value) as Partial<UserPreferences>;
     return {
       themeMode: parsed.themeMode === "light" || parsed.themeMode === "dark" ? parsed.themeMode : "system",
-      accent: parsed.accent ?? "violet",
+      accent: parsed.accent ?? "green",
       density: parsed.density === "compact" ? "compact" : "comfortable",
       reducedMotion: Boolean(parsed.reducedMotion),
     };
