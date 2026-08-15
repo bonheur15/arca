@@ -94,7 +94,7 @@ type ProfileUpdate struct {
 }
 
 func DefaultPreferences() Preferences {
-	return Preferences{ThemeMode: ThemeSystem, Accent: "violet", Density: DensityComfortable}
+	return Preferences{ThemeMode: ThemeSystem, Accent: "green", Density: DensityComfortable}
 }
 
 type Policy struct {
