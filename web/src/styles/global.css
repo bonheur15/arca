@@ -357,6 +357,7 @@
   .bottom-nav { display: none; }
   .nav-scrim { display: none; }
   .boot-screen { align-items: center; display: flex; flex-direction: column; gap: 8px; justify-content: center; min-height: 100vh; padding: 20px; }
+  .route-loading { align-items: center; display: flex; justify-content: center; min-height: min(420px, calc(100vh - var(--topbar-height) - 98px)); }
 
   .command-search { align-items: center; border: 1px solid var(--line); border-radius: 9px; display: flex; gap: 9px; padding: 0 11px; }
   .command-search svg { color: var(--ink-faint); }
