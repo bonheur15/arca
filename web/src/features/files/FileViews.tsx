@@ -1,4 +1,5 @@
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
+import * as Dialog from "@radix-ui/react-dialog";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import {
@@ -25,8 +26,10 @@ import {
   List,
   LockKeyhole,
   MoreHorizontal,
+  Maximize2,
   Pencil,
   Plus,
+  RotateCw,
   RotateCcw,
   SearchX,
   Share2,
@@ -36,6 +39,8 @@ import {
   Upload,
   Users,
   X,
+  ZoomIn,
+  ZoomOut,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -214,6 +219,11 @@ function FileGrid({ nodes, collection, selected, onSelect, onPreview, onDetails,
 
 function PreviewDialog({ node, onClose, supportUserId }: { node: ArcaNode | null; onClose: () => void; supportUserId?: string | null | undefined }) {
   const category = node ? fileCategory(node.mimeType, node.name) : "generic";
+  const isMedia = category === "image" || category === "video";
+  const [mediaState, setMediaState] = useState<"loading" | "ready" | "error">("loading");
+  const [zoom, setZoom] = useState(100);
+  const [rotation, setRotation] = useState(0);
+  const stageRef = useRef<HTMLDivElement>(null);
   const canInline = ["image", "video", "audio", "pdf", "text", "code"].includes(category);
   const text = useQuery({
     queryKey: ["preview-text", node?.id],
@@ -225,15 +235,102 @@ function PreviewDialog({ node, onClose, supportUserId }: { node: ArcaNode | null
     },
     enabled: Boolean(node && (category === "text" || category === "code")),
   });
+  useEffect(() => {
+    setMediaState("loading");
+    setZoom(100);
+    setRotation(0);
+  }, [node?.id]);
+  useEffect(() => {
+    if (!node || category !== "image") return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "+" || event.key === "=") setZoom((value) => Math.min(300, value + 25));
+      if (event.key === "-") setZoom((value) => Math.max(50, value - 25));
+      if (event.key === "0") setZoom(100);
+      if (event.key.toLowerCase() === "r") setRotation((value) => (value + 90) % 360);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [category, node]);
   if (!node) return null;
   if (node.kind === "folder") {
     return <Modal open onOpenChange={(open) => { if (!open) onClose(); }} title={node.name}><EmptyState title="This is a folder" description="Open it to browse its contents." action={<Link className="button button--primary" params={{ folderId: node.id }} search={supportSearch(supportUserId)} to="/files/$folderId">Open folder</Link>} /></Modal>;
   }
+  if (isMedia) {
+    const mediaUrl = `/api/v1/files/${node.id}/content?preview=1`;
+    const typeLabel = category === "image" ? "Image" : "Video";
+    return (
+      <Dialog.Root open onOpenChange={(open) => { if (!open) onClose(); }}>
+        <AnimatePresence>
+          <Dialog.Portal forceMount>
+            <Dialog.Overlay asChild forceMount><motion.div animate={{ opacity: 1 }} className="media-viewer__overlay" exit={{ opacity: 0 }} initial={{ opacity: 0 }} /></Dialog.Overlay>
+            <Dialog.Content asChild forceMount>
+              <motion.div animate={{ opacity: 1, scale: 1 }} className="media-viewer" exit={{ opacity: 0, scale: 0.99 }} initial={{ opacity: 0, scale: 0.99 }} transition={{ duration: 0.2 }}>
+                <header className="media-viewer__header">
+                  <div className="media-viewer__identity">
+                    <span className="media-viewer__type"><span />{typeLabel} preview</span>
+                    <Dialog.Title title={node.name}>{node.name}</Dialog.Title>
+                    <Dialog.Description>{formatBytes(node.sizeBytes)} · {node.mimeType ?? typeLabel}</Dialog.Description>
+                  </div>
+                  <div className="media-viewer__header-actions">
+                    <a className="media-viewer__download" download={safeDownloadName(node.name)} href={`/api/v1/files/${node.id}/content?download=1`}><ArrowDownToLine size={17} /><span>Download</span></a>
+                    <Dialog.Close asChild><button aria-label="Close preview" className="media-viewer__icon-button" type="button"><X size={20} /></button></Dialog.Close>
+                  </div>
+                </header>
+
+                <div className={`media-viewer__stage media-viewer__stage--${category}`} ref={stageRef}>
+                  {mediaState === "loading" ? <div className="media-viewer__status" role="status"><span className="media-viewer__loader" /><strong>Preparing preview</strong><small>Loading the original file securely…</small></div> : null}
+                  {mediaState === "error" ? <div className="media-viewer__status media-viewer__status--error" role="alert"><CircleAlert size={28} /><strong>Preview couldn’t be loaded</strong><small>The file is safe. Download it to open it locally.</small></div> : null}
+                  {category === "image" ? (
+                    <div className="media-viewer__image-scroll">
+                      <img
+                        alt={node.name}
+                        className={mediaState === "ready" ? "is-ready" : ""}
+                        onError={() => setMediaState("error")}
+                        onLoad={() => setMediaState("ready")}
+                        src={mediaUrl}
+                        style={{ transform: `rotate(${rotation}deg)`, zoom: zoom / 100 }}
+                      />
+                    </div>
+                  ) : (
+                    <video
+                      className={mediaState === "ready" ? "is-ready" : ""}
+                      controls
+                      onCanPlay={() => setMediaState("ready")}
+                      onError={() => setMediaState("error")}
+                      playsInline
+                      preload="metadata"
+                      src={mediaUrl}
+                    />
+                  )}
+                </div>
+
+                <footer className="media-viewer__footer">
+                  <dl className="media-viewer__facts">
+                    <div><dt>Owner</dt><dd>{node.owner.displayName || node.owner.username || "You"}</dd></div>
+                    <div><dt>Modified</dt><dd>{formatRelativeDate(node.updatedAt)}</dd></div>
+                    <div><dt>Access</dt><dd>{node.shared ? "Shared" : "Private"}</dd></div>
+                  </dl>
+                  <div className="media-viewer__tools" aria-label={`${typeLabel} controls`}>
+                    {category === "image" ? <>
+                      <button aria-label="Zoom out" disabled={zoom <= 50} onClick={() => setZoom((value) => Math.max(50, value - 25))} type="button"><ZoomOut size={17} /></button>
+                      <button aria-label="Reset zoom" className="media-viewer__zoom" onClick={() => setZoom(100)} type="button">{zoom}%</button>
+                      <button aria-label="Zoom in" disabled={zoom >= 300} onClick={() => setZoom((value) => Math.min(300, value + 25))} type="button"><ZoomIn size={17} /></button>
+                      <span className="media-viewer__separator" />
+                      <button aria-label="Rotate clockwise" onClick={() => setRotation((value) => (value + 90) % 360)} type="button"><RotateCw size={17} /></button>
+                    </> : null}
+                    <button aria-label="Enter fullscreen" onClick={() => void stageRef.current?.requestFullscreen().catch(() => undefined)} type="button"><Maximize2 size={17} /></button>
+                  </div>
+                </footer>
+              </motion.div>
+            </Dialog.Content>
+          </Dialog.Portal>
+        </AnimatePresence>
+      </Dialog.Root>
+    );
+  }
   return (
     <Modal open onOpenChange={(open) => { if (!open) onClose(); }} title={node.name} description={`${formatBytes(node.sizeBytes)} · ${node.mimeType ?? "File"}`} wide>
       <div className="preview">
-        {category === "image" ? <img alt={node.name} src={`/api/v1/files/${node.id}/content?preview=1`} /> : null}
-        {category === "video" ? <video controls src={`/api/v1/files/${node.id}/content?preview=1`} /> : null}
         {category === "audio" ? <div className="audio-preview"><span className="file-card__arch"><AudioLines size={42} /></span><audio controls src={`/api/v1/files/${node.id}/content?preview=1`} /></div> : null}
         {category === "pdf" ? <iframe sandbox="allow-same-origin" src={`/api/v1/files/${node.id}/content?preview=1`} title={`Preview of ${node.name}`} /> : null}
         {category === "text" || category === "code" ? text.isPending ? <LoadingState label="Loading preview…" compact /> : text.isError ? <ErrorState error={text.error} onRetry={() => void text.refetch()} /> : <pre><code>{text.data}</code></pre> : null}
