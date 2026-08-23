@@ -1,8 +1,9 @@
 import { QueryClient } from "@tanstack/react-query";
 import { createRootRoute, createRoute, createRouter, Link, Navigate, Outlet } from "@tanstack/react-router";
-import { lazy, Suspense, useEffect, type ReactNode } from "react";
+import { createContext, lazy, Suspense, useContext, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ApiError, api } from "../api/client";
+import type { User } from "../api/types";
 import { AppShell } from "../components/AppShell";
 import { ArcaMark } from "../components/ArcaMark";
 import { Button, ErrorState, LoadingState } from "../components/Primitives";
@@ -42,7 +43,15 @@ function RootComponent() {
   return <Suspense fallback={<div className="boot-screen"><ArcaMark size={42} /><LoadingState label="Opening Arca…" compact /></div>}><Outlet /></Suspense>;
 }
 
-function ProtectedPage({ children, admin = false }: { children: (user: NonNullable<Awaited<ReturnType<typeof api.session>>["user"]>) => ReactNode; admin?: boolean }) {
+const ProtectedUserContext = createContext<User | null>(null);
+
+function useProtectedUser(): User {
+  const user = useContext(ProtectedUserContext);
+  if (!user) throw new Error("useProtectedUser must be used inside ProtectedLayout");
+  return user;
+}
+
+function ProtectedLayout() {
   const { setPreferences } = useAppearance();
   const bootstrap = useQuery({ queryKey: ["bootstrap"], queryFn: api.bootstrapStatus, retry: false });
   const session = useQuery({ queryKey: ["session"], queryFn: api.session, retry: false, enabled: bootstrap.data?.initialized === true });
@@ -61,8 +70,22 @@ function ProtectedPage({ children, admin = false }: { children: (user: NonNullab
   if (session.isError && session.error instanceof ApiError && session.error.status === 401) return <Navigate to="/sign-in" replace />;
   if (session.isError) return <div className="boot-screen"><ErrorState error={session.error} onRetry={() => void session.refetch()} title="Your session could not be checked" /></div>;
   if (!session.data.authenticated || !session.data.user) return <Navigate to="/sign-in" replace />;
-  if (admin && session.data.user.role !== "superadmin") return <Navigate to="/files" replace />;
-  return <UploadProvider><AppShell user={session.data.user}>{children(session.data.user)}</AppShell></UploadProvider>;
+  return (
+    <ProtectedUserContext.Provider value={session.data.user}>
+      <UploadProvider>
+        <AppShell user={session.data.user}>
+          <Suspense fallback={<div className="route-loading"><LoadingState label="Opening page…" compact /></div>}>
+            <Outlet />
+          </Suspense>
+        </AppShell>
+      </UploadProvider>
+    </ProtectedUserContext.Provider>
+  );
+}
+
+function AdminLayout() {
+  const user = useProtectedUser();
+  return user.role === "superadmin" ? <Outlet /> : <Navigate to="/files" replace />;
 }
 
 function NotFoundPage() {
@@ -101,25 +124,28 @@ function validateGlobalSearch(search: Record<string, unknown>): FileSearch & { q
   };
 }
 
-const filesRoute = createRoute({ getParentRoute: () => rootRoute, path: "/files", validateSearch: validateFileSearch, component: () => { const { support_user: supportUserId } = filesRoute.useSearch(); return <ProtectedPage>{(user) => <FileBrowser collection="files" currentUserId={user.id} supportUserId={supportUserId} />}</ProtectedPage>; } });
-const folderRoute = createRoute({ getParentRoute: () => rootRoute, path: "/files/$folderId", validateSearch: validateFileSearch, component: () => { const { folderId } = folderRoute.useParams(); const { support_user: supportUserId } = folderRoute.useSearch(); return <ProtectedPage>{(user) => <FileBrowser collection="files" currentUserId={user.id} folderId={folderId} supportUserId={supportUserId} />}</ProtectedPage>; } });
-const recentRoute = createRoute({ getParentRoute: () => rootRoute, path: "/recent", validateSearch: validateFileSearch, component: () => <ProtectedPage>{(user) => <FileBrowser collection="recent" currentUserId={user.id} />}</ProtectedPage> });
-const starredRoute = createRoute({ getParentRoute: () => rootRoute, path: "/starred", validateSearch: validateFileSearch, component: () => <ProtectedPage>{(user) => <FileBrowser collection="favorites" currentUserId={user.id} />}</ProtectedPage> });
-const sharedRoute = createRoute({ getParentRoute: () => rootRoute, path: "/shared", validateSearch: validateFileSearch, component: () => <ProtectedPage>{(user) => <FileBrowser collection="shared" currentUserId={user.id} />}</ProtectedPage> });
-const trashRoute = createRoute({ getParentRoute: () => rootRoute, path: "/trash", validateSearch: validateFileSearch, component: () => <ProtectedPage>{(user) => <FileBrowser collection="trash" currentUserId={user.id} />}</ProtectedPage> });
-const searchRoute = createRoute({ getParentRoute: () => rootRoute, path: "/search", validateSearch: validateGlobalSearch, component: () => { const { q } = searchRoute.useSearch(); return <ProtectedPage>{(user) => <FileBrowser collection="search" currentUserId={user.id} query={q ?? ""} />}</ProtectedPage>; } });
+const protectedRoute = createRoute({ getParentRoute: () => rootRoute, id: "authenticated", component: ProtectedLayout });
+const adminRoute = createRoute({ getParentRoute: () => protectedRoute, id: "admin", component: AdminLayout });
 
-const profileRoute = createRoute({ getParentRoute: () => rootRoute, path: "/settings/profile", component: () => <ProtectedPage>{(user) => <ProfileSettingsPage user={user} />}</ProtectedPage> });
-const appearanceRoute = createRoute({ getParentRoute: () => rootRoute, path: "/settings/appearance", component: () => <ProtectedPage>{(user) => <AppearanceSettingsPage user={user} />}</ProtectedPage> });
-const sessionsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/settings/sessions", component: () => <ProtectedPage>{() => <SessionsSettingsPage />}</ProtectedPage> });
-const developerRoute = createRoute({ getParentRoute: () => rootRoute, path: "/settings/developer", component: () => <ProtectedPage>{(user) => <DeveloperSettingsPage user={user} />}</ProtectedPage> });
+const filesRoute = createRoute({ getParentRoute: () => protectedRoute, path: "/files", validateSearch: validateFileSearch, component: () => { const user = useProtectedUser(); const { support_user: supportUserId } = filesRoute.useSearch(); return <FileBrowser collection="files" currentUserId={user.id} supportUserId={supportUserId} />; } });
+const folderRoute = createRoute({ getParentRoute: () => protectedRoute, path: "/files/$folderId", validateSearch: validateFileSearch, component: () => { const user = useProtectedUser(); const { folderId } = folderRoute.useParams(); const { support_user: supportUserId } = folderRoute.useSearch(); return <FileBrowser collection="files" currentUserId={user.id} folderId={folderId} supportUserId={supportUserId} />; } });
+const recentRoute = createRoute({ getParentRoute: () => protectedRoute, path: "/recent", validateSearch: validateFileSearch, component: () => { const user = useProtectedUser(); return <FileBrowser collection="recent" currentUserId={user.id} />; } });
+const starredRoute = createRoute({ getParentRoute: () => protectedRoute, path: "/starred", validateSearch: validateFileSearch, component: () => { const user = useProtectedUser(); return <FileBrowser collection="favorites" currentUserId={user.id} />; } });
+const sharedRoute = createRoute({ getParentRoute: () => protectedRoute, path: "/shared", validateSearch: validateFileSearch, component: () => { const user = useProtectedUser(); return <FileBrowser collection="shared" currentUserId={user.id} />; } });
+const trashRoute = createRoute({ getParentRoute: () => protectedRoute, path: "/trash", validateSearch: validateFileSearch, component: () => { const user = useProtectedUser(); return <FileBrowser collection="trash" currentUserId={user.id} />; } });
+const searchRoute = createRoute({ getParentRoute: () => protectedRoute, path: "/search", validateSearch: validateGlobalSearch, component: () => { const user = useProtectedUser(); const { q } = searchRoute.useSearch(); return <FileBrowser collection="search" currentUserId={user.id} query={q ?? ""} />; } });
 
-const adminUsersRoute = createRoute({ getParentRoute: () => rootRoute, path: "/admin/users", component: () => <ProtectedPage admin>{() => <AdminUsersPage />}</ProtectedPage> });
-const adminRequestsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/admin/requests", component: () => <ProtectedPage admin>{() => <AdminRequestsPage />}</ProtectedPage> });
-const adminStorageRoute = createRoute({ getParentRoute: () => rootRoute, path: "/admin/storage", component: () => <ProtectedPage admin>{() => <AdminStoragePage />}</ProtectedPage> });
-const adminPoliciesRoute = createRoute({ getParentRoute: () => rootRoute, path: "/admin/policies", component: () => <ProtectedPage admin>{() => <AdminPoliciesPage />}</ProtectedPage> });
-const adminAuditRoute = createRoute({ getParentRoute: () => rootRoute, path: "/admin/audit", component: () => <ProtectedPage admin>{() => <AdminAuditPage />}</ProtectedPage> });
-const adminSettingsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/admin/settings", component: () => <ProtectedPage admin>{() => <AdminSettingsPage />}</ProtectedPage> });
+const profileRoute = createRoute({ getParentRoute: () => protectedRoute, path: "/settings/profile", component: () => { const user = useProtectedUser(); return <ProfileSettingsPage user={user} />; } });
+const appearanceRoute = createRoute({ getParentRoute: () => protectedRoute, path: "/settings/appearance", component: () => { const user = useProtectedUser(); return <AppearanceSettingsPage user={user} />; } });
+const sessionsRoute = createRoute({ getParentRoute: () => protectedRoute, path: "/settings/sessions", component: SessionsSettingsPage });
+const developerRoute = createRoute({ getParentRoute: () => protectedRoute, path: "/settings/developer", component: () => { const user = useProtectedUser(); return <DeveloperSettingsPage user={user} />; } });
+
+const adminUsersRoute = createRoute({ getParentRoute: () => adminRoute, path: "/admin/users", component: AdminUsersPage });
+const adminRequestsRoute = createRoute({ getParentRoute: () => adminRoute, path: "/admin/requests", component: AdminRequestsPage });
+const adminStorageRoute = createRoute({ getParentRoute: () => adminRoute, path: "/admin/storage", component: AdminStoragePage });
+const adminPoliciesRoute = createRoute({ getParentRoute: () => adminRoute, path: "/admin/policies", component: AdminPoliciesPage });
+const adminAuditRoute = createRoute({ getParentRoute: () => adminRoute, path: "/admin/audit", component: AdminAuditPage });
+const adminSettingsRoute = createRoute({ getParentRoute: () => adminRoute, path: "/admin/settings", component: AdminSettingsPage });
 
 const indexRoute = createRoute({ getParentRoute: () => rootRoute, path: "/", component: () => <Navigate to="/files" replace /> });
 
@@ -130,23 +156,27 @@ const routeTree = rootRoute.addChildren([
   requestAccessRoute,
   redeemRoute,
   publicRoute,
-  filesRoute,
-  folderRoute,
-  recentRoute,
-  starredRoute,
-  sharedRoute,
-  trashRoute,
-  searchRoute,
-  profileRoute,
-  appearanceRoute,
-  sessionsRoute,
-  developerRoute,
-  adminUsersRoute,
-  adminRequestsRoute,
-  adminStorageRoute,
-  adminPoliciesRoute,
-  adminAuditRoute,
-  adminSettingsRoute,
+  protectedRoute.addChildren([
+    filesRoute,
+    folderRoute,
+    recentRoute,
+    starredRoute,
+    sharedRoute,
+    trashRoute,
+    searchRoute,
+    profileRoute,
+    appearanceRoute,
+    sessionsRoute,
+    developerRoute,
+    adminRoute.addChildren([
+      adminUsersRoute,
+      adminRequestsRoute,
+      adminStorageRoute,
+      adminPoliciesRoute,
+      adminAuditRoute,
+      adminSettingsRoute,
+    ]),
+  ]),
 ]);
 
 export const router = createRouter({ routeTree, defaultPreload: "intent", defaultPreloadStaleTime: 0 });
