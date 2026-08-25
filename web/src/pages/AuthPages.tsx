@@ -181,7 +181,7 @@ export function SetupPage() {
     if (step === 2) verify.mutate();
   };
   return (
-    <AuthLayout eyebrow="First-run setup" title={step === 0 ? "Open your new vault" : step === 1 ? "Make Arca yours" : "Verify the first admin"} description={step === 0 ? "Use the 20-character setup code printed in the Arca server console... It expires after 30 minutes." : step === 1 ? "Connect authentication and create the initial superadmin. Secrets are sent directly to this instance." : `WorkOS sent a six-digit Magic Auth code to ${form.email}.`}>
+    <AuthLayout eyebrow="First-run setup" title={step === 0 ? "Open your new vault" : step === 1 ? "Make Arca yours" : "Verify the first admin"} description={step === 0 ? "Use the 20-character setup code printed in the Arca server console. It expires after 30 minutes." : step === 1 ? "Connect authentication and create the initial superadmin. Secrets are sent directly to this instance." : `WorkOS sent a six-digit Magic Auth code to ${form.email}.`}>
       <ol className="setup-steps">
         {setupSteps.map((label, index) => <li className={index < step ? "complete" : index === step ? "active" : ""} key={label}><span>{index < step ? <Check size={13} /> : index + 1}</span>{label}</li>)}
       </ol>
